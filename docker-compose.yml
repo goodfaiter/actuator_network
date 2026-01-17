@@ -1,0 +1,22 @@
+services:
+  dev_cpu:
+    build: 
+      dockerfile: ./DockerfileCpu
+    container_name: actuator_network_cpu
+    volumes:
+      - ./:/workspace
+    command: tail -f /dev/null
+  dev_gpu:
+    build:
+      dockerfile: ./DockerfileGpu
+    container_name: actuator_network_gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    volumes:
+      - ./:/workspace
+    command: tail -f /dev/null

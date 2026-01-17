@@ -1,0 +1,13 @@
+[project]
+name = "actuator_network"
+version = "0.1.0"
+description = "Package for processing mcap files and training an actuator network"
+authors = [
+    {name = "Valentin Yuryev", email = "valentin.yuryev@gmail.com"},
+]
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+[project.urls]
+repository = "https://github.com/goodfaiter/actuator_network"
