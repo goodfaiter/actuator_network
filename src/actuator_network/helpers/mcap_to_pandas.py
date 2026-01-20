@@ -33,7 +33,7 @@ def read_mcap_to_dataframe(file_path: str) -> pd.DataFrame:
     data = []
 
     msgs = read_ros2_messages(file_path, topics=["/imu/data_raw", 
-                                                #  "/weight",
+                                                 "/weight",
                                                  "/desired_position_rad",
                                                  "/measured_position_rad",
                                                  "/measured_velocity_rad_per_sec",])
