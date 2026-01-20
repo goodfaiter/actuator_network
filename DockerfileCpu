@@ -9,7 +9,7 @@ RUN pip3 install --upgrade pip
 RUN pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
 # Install Python dependencies
-RUN pip3 install numpy rosbags pybind11 pandas scikit-learn matplotlib tqdm roma PyQt6 pyarrow mcap pandas
+RUN pip3 install numpy rosbags pybind11 pandas scikit-learn matplotlib tqdm roma PyQt6 pyarrow mcap pandas mcap-ros2-support
 
 # Install dependencies
 RUN apt-get update && apt-get install -y git
