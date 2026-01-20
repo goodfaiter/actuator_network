@@ -6,6 +6,7 @@ services:
     volumes:
       - ./:/workspace
     command: tail -f /dev/null
+    restart: unless-stopped
   dev_gpu:
     build:
       dockerfile: ./DockerfileGpu
