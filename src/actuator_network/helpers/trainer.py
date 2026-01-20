@@ -1,5 +1,5 @@
 import torch
-
+import wandb
 from helpers.wrapper import ScaledModelWrapper
 
 
@@ -41,17 +41,51 @@ def data_generator(inputs, outputs, batch_size):
         yield inputs[batch_indices], outputs[batch_indices]
 
 
+def save_model(model: ScaledModelWrapper, save_path: str) -> None:
+    """Save the model as a TorchScript file
+    Args:
+        model (ScaledModelWrapper): The model to save
+        save_path (str): Path to save the model
+    """
+    model.freeze()
+    model.trace_and_save(save_path)
+    model.unfreeze()
+
+
 def train(model, inputs, outputs, model_to_save: ScaledModelWrapper = None):
-    num_epochs = 5
+    """Train the model with validation and model checkpointing
+
+    Args:
+        model: The PyTorch model to train
+        inputs: Input tensor
+        outputs: Output tensor
+        model_to_save: ScaledModelWrapper instance for saving
+    """
+    num_epochs = 100
     learning_rate = 0.001
     batch_size = 64
 
+    wandb.init(project="actuator_network")
+    wandb.config.update({"learning_rate": learning_rate, "batch_size": batch_size, "num_epochs": num_epochs, "train_ratio": 0.8})
+    # wandb.watch(model, log="all", log_freq=100)
+
+    # Split data
     inputs_train, outputs_train, inputs_val, outputs_val = split_data(inputs, outputs)
-    data_generator_train = data_generator(inputs_train, outputs_train, batch_size)
 
     criterion = torch.nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+    # Track best validation loss for checkpointing
+    best_val_loss = float("inf")
+
     for epoch in range(num_epochs):
+        data_generator_train = data_generator(inputs_train, outputs_train, batch_size)
+
+        # Training phase
+        model.train()
+        epoch_loss = 0.0
+        num_batches = 0
+
         for batch_inputs, batch_outputs in data_generator_train:
             optimizer.zero_grad()
             predictions = model(batch_inputs)
@@ -59,12 +93,33 @@ def train(model, inputs, outputs, model_to_save: ScaledModelWrapper = None):
             loss.backward()
             optimizer.step()
 
-            if (epoch + 1) % 10 == 0 or epoch == 0:
-                test_loss = criterion(model(inputs_val), outputs_val)
-                print(f"Epoch [{epoch + 1}/{num_epochs}], Loss: {loss.item():.4f}, Val Loss: {test_loss.item():.4f}")
+            epoch_loss += loss.item()
+            num_batches += 1
 
-    if model_to_save is not None:
-        model_to_save.freeze()
-        model_to_save.trace_and_save("model_scripted.pt")
-        model_to_save.unfreeze()
-        torch.save(model_to_save.state_dict(), "model.pth")
+        avg_train_loss = epoch_loss / max(num_batches, 1)
+
+        # Validation phase
+        model.eval()
+        with torch.no_grad():
+            val_predictions = model(inputs_val)
+            val_loss = criterion(val_predictions, outputs_val)
+
+        # Log metrics
+        print(f"Epoch [{epoch + 1}/{num_epochs}], " f"Train Loss: {avg_train_loss:.4f}, Val Loss: {val_loss.item():.4f}")
+
+        wandb.log({"train_loss": avg_train_loss, "val_loss": val_loss.item(), "epoch": epoch + 1})
+
+        # save every 100
+        if (epoch + 1) % 100 == 0:
+            save_model(model_to_save, f"model_scripted_epoch_{epoch + 1}.pt")
+
+        # Check if this is the best model
+        if val_loss.item() < best_val_loss:
+            best_val_loss = val_loss.item()
+            save_model(model_to_save, "model_scripted_best.pt")
+            print(f"New best model! Val loss: {best_val_loss:.4f}")
+
+    save_model(model_to_save, "model_scripted_final.pt")
+
+    # Clean up wandb
+    wandb.finish()
