@@ -70,6 +70,7 @@ class ScaledModelWrapper(nn.Module):
 
 
 class ModelSaver:
+    _root_folder: str
     _folder: str
     _file_prefix: str
     _wrapped_model: ScaledModelWrapper
@@ -77,8 +78,9 @@ class ModelSaver:
     def __init__(self, model: ScaledModelWrapper, folder: str):
         self._wrapped_model = model
         now = datetime.now()
+        self._root_folder = folder
         prefix = now.strftime("%Y_%m_%d_%H_%M_%S")
-        self._folder = os.path.join(folder, prefix + "/")
+        self._folder = os.path.join(self._root_folder, prefix + "/")
         if not os.path.exists(self._folder):
             os.makedirs(self._folder)
         self._file_prefix = os.path.join(self._folder, prefix + "_")
@@ -93,5 +95,12 @@ class ModelSaver:
             suffix = suffix[1:]
         self._wrapped_model.freeze()
         save_path = self._file_prefix + suffix + ".pt"
+        self._wrapped_model.trace_and_save(save_path)
+        self._wrapped_model.unfreeze()
+
+    def save_latest(self) -> None:
+        """Save the model as 'latest.pt' in the root folder"""
+        self._wrapped_model.freeze()
+        save_path = os.path.join(self._root_folder, "latest.pt")
         self._wrapped_model.trace_and_save(save_path)
         self._wrapped_model.unfreeze()
