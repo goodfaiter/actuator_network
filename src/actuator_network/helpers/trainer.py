@@ -1,6 +1,6 @@
 import torch
 import wandb
-from helpers.wrapper import ScaledModelWrapper
+from helpers.wrapper import ScaledModelWrapper, ModelSaver
 
 
 def split_data(inputs, outputs, train_ratio=0.8):
@@ -41,25 +41,14 @@ def data_generator(inputs, outputs, batch_size):
         yield inputs[batch_indices], outputs[batch_indices]
 
 
-def save_model(model: ScaledModelWrapper, save_path: str) -> None:
-    """Save the model as a TorchScript file
-    Args:
-        model (ScaledModelWrapper): The model to save
-        save_path (str): Path to save the model
-    """
-    model.freeze()
-    model.trace_and_save(save_path)
-    model.unfreeze()
-
-
-def train(model, inputs, outputs, model_to_save: ScaledModelWrapper = None):
+def train(model, inputs, outputs, model_saver: ModelSaver = None):
     """Train the model with validation and model checkpointing
 
     Args:
         model: The PyTorch model to train
         inputs: Input tensor
         outputs: Output tensor
-        model_to_save: ScaledModelWrapper instance for saving
+        model_saver: ModelSaver instance for saving
     """
     num_epochs = 100
     learning_rate = 0.001
@@ -111,15 +100,15 @@ def train(model, inputs, outputs, model_to_save: ScaledModelWrapper = None):
 
         # save every 100
         if (epoch + 1) % 100 == 0:
-            save_model(model_to_save, f"model_scripted_epoch_{epoch + 1}.pt")
+            model_saver.save_model(f"_epoch_{epoch + 1}")
 
         # Check if this is the best model
         if val_loss.item() < best_val_loss:
             best_val_loss = val_loss.item()
-            save_model(model_to_save, "model_scripted_best.pt")
+            model_saver.save_model("_best")
             print(f"New best model! Val loss: {best_val_loss:.4f}")
 
-    save_model(model_to_save, "model_scripted_final.pt")
+    model_saver.save_model("_final")
 
     # Clean up wandb
     wandb.finish()
