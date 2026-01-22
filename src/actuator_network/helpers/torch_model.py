@@ -1,5 +1,6 @@
 import torch
 
+
 class TorchMlpModel(torch.nn.Module):
     def __init__(self, input_size: int, output_size: int, hidden_layers: list):
         super(TorchMlpModel, self).__init__()
