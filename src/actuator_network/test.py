@@ -1,11 +1,8 @@
 import torch
 from helpers.mcap_to_pandas import read_mcap_to_dataframe
 from helpers.pandas_processing import extrapolate_dataframe, process_dataframe
-from helpers.pandas_to_torch import pandas_to_torch, process_inputs, process_outputs, normalize_tensor
+from helpers.pandas_to_torch import pandas_to_torch, process_inputs
 from helpers.pandas_to_mcap import data_df_to_mcap
-from helpers.wrapper import ScaledModelWrapper
-from helpers.torch_model import TorchMlpModel
-from helpers.trainer import train
 import os
 
 os.environ["WANDB_API_KEY"] = "eec35c2a3ec81aeed2deaeb37585e1d2ab561f5f"
@@ -19,11 +16,12 @@ def main():
     prediction = False  # Whether we are doing prediction or estimation
     input_cols = ["desired_position_rad_data", "measured_position_rad_data", "measured_velocity_rad_per_sec_data"]
     output_cols = ["calculated_acceleration_meter_per_sec2_data", "load_newton_data"]
-    mcap_file_paths = ["/workspace/data/training_data/2026_01_21/rosbag2_2026_01_21-13_01_03_0.mcap", # spring 1 test
-                       "/workspace/data/training_data/2026_01_21/rosbag2_2026_01_21-15_06_38_0.mcap", # blocked actuator test file
-                       ]
+    mcap_file_paths = [
+        "/workspace/data/training_data/2026_01_21/rosbag2_2026_01_21-13_01_03_0.mcap",  # spring 1 test
+        # "/workspace/data/training_data/2026_01_21/rosbag2_2026_01_21-15_06_38_0.mcap",  # blocked actuator test file
+    ]
 
-    file_path = "/workspace/data/output_data/2026_01_22_08_53_22/2026_01_22_08_53_22_best.pt"
+    file_path = "/workspace/data/output_data/latest.pt"
     model = torch.jit.load(file_path, map_location="cpu")
 
     for mcap_file_path in mcap_file_paths:
