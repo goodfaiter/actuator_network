@@ -16,6 +16,7 @@ def main():
     freq = 80  # Desired frequency in Hz
     stride = 4  # Stride for history and future steps, note stride 4 means our final freq is 20Hz
     num_hist = 3  # Number of history steps
+    prediction = False  # Whether we are doing prediction or estimation
     input_cols = ["desired_position_rad_data", "measured_position_rad_data", "measured_velocity_rad_per_sec_data"]
     output_cols = ["calculated_acceleration_meter_per_sec2_data", "load_newton_data"]
     mcap_file_paths = ["/workspace/data/training_data/2026_01_21/rosbag2_2026_01_21-13_01_03_0.mcap", # spring 1 test
@@ -31,7 +32,7 @@ def main():
         process_dataframe(data_df_extrapolated)
         col_names, data_tensor = pandas_to_torch(data_df_extrapolated, device="cpu")
         input_indices = [col_names.index(col) for col in input_cols]
-        inputs = process_inputs(data_tensor[:, input_indices], stride=stride, num_hist=num_hist)
+        inputs = process_inputs(data_tensor[:, input_indices], stride=stride, num_hist=num_hist, prediction=prediction)
 
         # Run all the samples and save to the dataframe
         with torch.no_grad():
@@ -39,7 +40,7 @@ def main():
         # Add predictions to dataframe
         for i, col in enumerate(output_cols):
             data_df_extrapolated[col + "_predicted"] = 0.0
-            data_df_extrapolated[col + "_predicted"].iloc[stride:] = predictions[:-stride, i].numpy()
+            data_df_extrapolated[col + "_predicted"].iloc[(num_hist + (0 if prediction else -1)) * stride:] = predictions[:, i].numpy()
         # Save the dataframe with predictions
         data_df_to_mcap(data_df_extrapolated, mcap_file_path.replace(".mcap", "_predicted"))
 

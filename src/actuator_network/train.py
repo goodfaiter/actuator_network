@@ -14,35 +14,42 @@ def main():
     freq = 80  # Desired frequency in Hz
     stride = 4  # Stride for history and future steps, note stride 4 means our final freq is 20Hz
     num_hist = 3  # Number of history steps
+    prediction = False  # Whether we are doing prediction or estimation
     input_cols = ["desired_position_rad_data", "measured_position_rad_data", "measured_velocity_rad_per_sec_data"]
-    output_cols = ["weight_data"]
+    output_cols = ["calculated_acceleration_meter_per_sec2_data", "load_newton_data"]
     mcap_file_paths = [
-        "/workspace/data/training_data/2026_01_17/rosbag2_2026_01_17_14_37_22_0_recovered.mcap",  # test data, delete later
+        "/workspace/data/training_data/2026_01_20/rosbag2_2026_01_20-18_28_50_0.mcap",  # All spring 1 data
+        "/workspace/data/training_data/2026_01_21/rosbag2_2026_01_21-12_55_29_0.mcap",  # All spring 1 data
+        "/workspace/data/training_data/2026_01_21/rosbag2_2026_01_21-12_58_39_0.mcap",  # All spring 1 data
+        "/workspace/data/training_data/2026_01_21/rosbag2_2026_01_21-13_00_05_0.mcap",  # All spring 1 data
+        # "/workspace/data/training_data/2026_01_21/rosbag2_2026_01_21-13_01_03_0.mcap", # Test with spring
+        # "/workspace/data/training_data/2026_01_21/rosbag2_2026_01_21-15_00_42_0.mcap", # blocked actuator
+        # "/workspace/data/training_data/2026_01_21/rosbag2_2026_01_21-15_02_46_0.mcap", # blocked actuator
+        # "/workspace/data/training_data/2026_01_21/rosbag2_2026_01_21-15_06_38_0.mcap", # blocked actuator test file
     ]
 
-    data_df = read_mcap_to_dataframe(mcap_file_paths[0])
-    data_df_extrapolated = extrapolate_dataframe(data_df, freq=freq)
-    col_names, data_tensor = pandas_to_torch(data_df_extrapolated, device="cpu")
-    input_indices = [col_names.index(col) for col in input_cols]
-    output_indices = [col_names.index(col) for col in output_cols]
-    inputs = process_inputs(data_tensor[:, input_indices], stride=stride, num_hist=num_hist)
-    outputs = process_outputs(data_tensor[:, output_indices], stride=stride)
-    inputs_normalized, inputs_mean, inputs_std = normalize_tensor(inputs)
-    outputs_normalized, outputs_mean, outputs_std = normalize_tensor(outputs)
+    all_inputs = torch.empty((0, len(input_cols) * num_hist))
+    all_outputs = torch.empty((0, len(output_cols)))
+    for mcap_file_path in mcap_file_paths:
+        data_df = read_mcap_to_dataframe(mcap_file_path)
+        data_df_extrapolated = extrapolate_dataframe(data_df, freq=freq)
+        process_dataframe(data_df_extrapolated)
+        data_df_to_mcap(data_df_extrapolated, mcap_file_path.replace(".mcap", "_processed"))
+        # data_df_extrapolated.to_csv(mcap_file_path.replace(".mcap", "_processed.csv"))
+        col_names, data_tensor = pandas_to_torch(data_df_extrapolated, device="cpu")
+        input_indices = [col_names.index(col) for col in input_cols]
+        output_indices = [col_names.index(col) for col in output_cols]
+        inputs = process_inputs(data_tensor[:, input_indices], stride=stride, num_hist=num_hist, prediction=prediction)
+        outputs = process_outputs(data_tensor[:, output_indices], stride=stride, num_hist=num_hist, prediction=prediction)
+        all_inputs = torch.cat((all_inputs, inputs), dim=0)
+        all_outputs = torch.cat((all_outputs, outputs), dim=0)
+
+    inputs_normalized, inputs_mean, inputs_std = normalize_tensor(all_inputs)
+    outputs_normalized, outputs_mean, outputs_std = normalize_tensor(all_outputs)
     model = TorchMlpModel(input_size=inputs_normalized.shape[1], output_size=outputs_normalized.shape[1], hidden_layers=[32, 32])
     wrapped_model = ScaledModelWrapper(model, inputs_mean, inputs_std, outputs_mean, outputs_std)
-    train(model, inputs_normalized, outputs_normalized, model_to_save=wrapped_model)
-
-    # plot data for testing
-    # import matplotlib.pyplot as plt
-    # plt.figure(figsize=(12, 8))
-    # for column in data.columns:
-    #     plt.plot(data.index, data[column], label=column)
-    # plt.xlabel("Time")
-    # plt.ylabel("Values")
-    # plt.title("Extrapolated Data from MCAP")
-    # plt.legend()
-    # plt.show()
+    model_saver = ModelSaver(wrapped_model, "/workspace/data/output_data/")
+    train(model, inputs_normalized, outputs_normalized, model_saver=model_saver)
 
 
 if __name__ == "__main__":
