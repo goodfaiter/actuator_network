@@ -48,7 +48,7 @@ def main():
     inputs_normalized, inputs_mean, inputs_std = normalize_tensor(all_inputs)
     outputs_normalized, outputs_mean, outputs_std = normalize_tensor(all_outputs)
     model = TorchMlpModel(input_size=inputs_normalized.shape[1], output_size=outputs_normalized.shape[1], hidden_layers=[32, 32])
-    wrapped_model = ScaledModelWrapper(model, inputs_mean, inputs_std, outputs_mean, outputs_std)
+    wrapped_model = ScaledModelWrapper(model, inputs_mean, inputs_std, outputs_mean, outputs_std, frequency=freq, history_size=num_hist, stride=stride, prediction=prediction, input_columns=input_cols, output_columns=output_cols)
     model_saver = ModelSaver(wrapped_model, "/workspace/data/output_data/")
     train(model, inputs_normalized, outputs_normalized, model_saver=model_saver)
 

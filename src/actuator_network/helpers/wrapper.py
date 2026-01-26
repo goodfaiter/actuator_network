@@ -1,3 +1,4 @@
+from numpy import gradient, require
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -20,6 +21,12 @@ class ScaledModelWrapper(nn.Module):
         input_std: Tensor,
         output_mean: Tensor,
         output_std: Tensor,
+        frequency: int = 1,
+        history_size: int = 1,
+        stride: int = 1,
+        prediction: bool = False,
+        input_columns: list[str] = [],
+        output_columns: list[str] = [],
     ):
         super().__init__()
         self.model = model
@@ -29,6 +36,12 @@ class ScaledModelWrapper(nn.Module):
         self.register_buffer("input_std", input_std)
         self.register_buffer("output_mean", output_mean)
         self.register_buffer("output_std", output_std)
+        self.register_buffer("frequency", torch.tensor(frequency, dtype=torch.int32, requires_grad=False))
+        self.register_buffer("history_size", torch.tensor(history_size, dtype=torch.int32, requires_grad=False))
+        self.register_buffer("stride", torch.tensor(stride, dtype=torch.int32, requires_grad=False))
+        self.register_buffer("prediction_mode", torch.tensor(prediction, dtype=torch.bool, requires_grad=False))
+        self.input_columns = input_columns
+        self.output_columns = output_columns
 
     def forward(self, x: Tensor) -> Tensor:
         x = (x - self.input_mean) / self.input_std

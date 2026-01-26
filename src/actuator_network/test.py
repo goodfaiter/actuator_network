@@ -6,13 +6,6 @@ from helpers.pandas_to_mcap import data_df_to_mcap
 
 
 def main():
-    # Configuration
-    freq = 80  # Desired frequency in Hz
-    stride = 4  # Stride for history and future steps, note stride 4 means our final freq is 20Hz
-    num_hist = 3  # Number of history steps
-    prediction = False  # Whether we are doing prediction or estimation
-    input_cols = ["desired_position_rad_data", "measured_position_rad_data", "measured_velocity_rad_per_sec_data"]
-    output_cols = ["calculated_acceleration_meter_per_sec2_data", "load_newton_data"]
     mcap_file_paths = [
         ("/workspace/data/training_data/2026_01_21/rosbag2_2026_01_21-13_01_03_0.mcap", 1.26 / 4.81),  # spring 1 test
         # ("/workspace/data/training_data/2026_01_22/rosbag2_2026_01_22-16_20_19_0.mcap", None),  # Blocked data
@@ -21,6 +14,13 @@ def main():
 
     file_path = "/workspace/data/output_data/latest.pt"
     model = torch.jit.load(file_path, map_location="cpu")
+
+    freq = int(model.frequency.item())
+    stride = int(model.stride.item())
+    num_hist = int(model.history_size.item())
+    prediction = bool(model.prediction_mode.item())
+    input_cols = model.input_columns
+    output_cols = model.output_columns
 
     for mcap_file_path, spring_constant in mcap_file_paths:
         data_df = read_mcap_to_dataframe(mcap_file_path)
