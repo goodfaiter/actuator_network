@@ -40,13 +40,23 @@ class ScaledModelWrapper(nn.Module):
         self.register_buffer("history_size", torch.tensor(history_size, dtype=torch.int32, requires_grad=False))
         self.register_buffer("stride", torch.tensor(stride, dtype=torch.int32, requires_grad=False))
         self.register_buffer("prediction_mode", torch.tensor(prediction, dtype=torch.bool, requires_grad=False))
+        if hasattr(model, "rnn") and model.rnn is not None:
+            self.register_buffer("h0", torch.zeros(model.num_layers, 1, model.hidden_size))
         self.input_columns = input_columns
         self.output_columns = output_columns
+
+    def reset(self):
+        """Reset any internal state of the model (if applicable)"""
+        if hasattr(self, "h0"):
+            self.h0[:] = 0.0
 
     def forward(self, x: Tensor) -> Tensor:
         x = (x - self.input_mean) / self.input_std
 
-        x = self.model(x)
+        if hasattr(self, "h0"):
+            x, self.h0 = self.model.deploy_forward(x, self.h0)
+        else:
+            x = self.model.deploy_forward(x)
 
         x = x * self.output_std + self.output_mean
 
