@@ -3,9 +3,6 @@ from helpers.mcap_to_pandas import read_mcap_to_dataframe
 from helpers.pandas_processing import extrapolate_dataframe, process_dataframe
 from helpers.pandas_to_torch import pandas_to_torch, process_inputs
 from helpers.pandas_to_mcap import data_df_to_mcap
-import os
-
-os.environ["WANDB_API_KEY"] = "eec35c2a3ec81aeed2deaeb37585e1d2ab561f5f"
 
 
 def main():
