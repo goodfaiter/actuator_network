@@ -1,3 +1,4 @@
+import torch
 from helpers.mcap_to_pandas import read_mcap_to_dataframe
 from helpers.pandas_processing import extrapolate_dataframe, process_dataframe
 from helpers.pandas_to_torch import pandas_to_torch, process_inputs, process_outputs, normalize_tensor
@@ -17,6 +18,7 @@ def main():
     num_hist = 3  # Number of history steps
     prediction = False  # Whether we are doing prediction or estimation
     input_cols = ["desired_position_rad_data", "measured_position_rad_data", "measured_velocity_rad_per_sec_data"]
+    # input_cols = ["delta_position_rad_data", "measured_velocity_rad_per_sec_data"]
     output_cols = ["calculated_acceleration_meter_per_sec2_data", "load_newton_data"]
     mcap_file_paths = [
         ("/workspace/data/training_data/2026_01_20/rosbag2_2026_01_20-18_28_50_0.mcap", 1.26 / 4.81),  # All spring 1 data, spring constant kg/rad
@@ -47,7 +49,7 @@ def main():
 
     inputs_normalized, inputs_mean, inputs_std = normalize_tensor(all_inputs)
     outputs_normalized, outputs_mean, outputs_std = normalize_tensor(all_outputs)
-    model = TorchMlpModel(input_size=inputs_normalized.shape[1], output_size=outputs_normalized.shape[1], hidden_layers=[32, 32])
+    model = TorchMlpModel(input_size=inputs_normalized.shape[-1], output_size=outputs_normalized.shape[-1], hidden_layers=[32, 32])
     wrapped_model = ScaledModelWrapper(model, inputs_mean, inputs_std, outputs_mean, outputs_std, frequency=freq, history_size=num_hist, stride=stride, prediction=prediction, input_columns=input_cols, output_columns=output_cols)
     model_saver = ModelSaver(wrapped_model, "/workspace/data/output_data/")
     train(model, inputs_normalized, outputs_normalized, model_saver=model_saver)
