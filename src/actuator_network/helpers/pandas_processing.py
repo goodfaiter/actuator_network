@@ -37,17 +37,19 @@ def derivate_signal(signal: pd.Series, dt: float) -> pd.Series:
     return derivative
 
 
-def process_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+def process_dataframe(df: pd.DataFrame, spring_constant: float = None) -> pd.DataFrame:
     """Calculate the tendon force from weight and acceleration"""
     num_samples_for_offset = 40  # 0.5 seconds at 80Hz
     mass = 0.02  # kg
     g = 9.81  # m/s^2
     radius = 0.012  # m
 
+    df["delta_position_rad_data"] = df["desired_position_rad_data"] - df["measured_position_rad_data"]
+
     # Re calc weight due to poor sensor
-    spring_constant = 1.26 / 4.81  # kg/rad, imperically determined
-    df["weight_kg_data"] = spring_constant * df["measured_position_rad_data"]
-    # df["weight_kg_data"] = filter_signal(df["weight_kg_data"])
+    # spring_constant = 1.26 / 4.81  # kg/rad, imperically determined
+    if spring_constant is not None:
+        df["weight_kg_data"] = spring_constant * df["measured_position_rad_data"]
 
     # Acceleration of motor
     df["calculated_acceleration_meter_per_sec2_data"] = derivate_signal(df["measured_velocity_rad_per_sec_data"], dt=1 / 80) * radius
