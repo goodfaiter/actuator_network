@@ -2,21 +2,24 @@ import torch
 
 
 def normalize_tensor(tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """ Normalize a tensor to have zero mean and unit variance
+    """Normalize a tensor to have zero mean and unit variance
     Args:
         tensor (torch.Tensor): Input tensor of shape (batch_size, ..., feature_dim)
     Returns:
         tuple: Normalized tensor, mean, and standard deviation
     """
-    mean = torch.mean(tensor, dim=[i for i in range(tensor.dim() - 1)], keepdim=True)
-    std = torch.std(tensor, dim=[i for i in range(tensor.dim() - 1)], keepdim=True) + 1e-8  # Add small value to avoid division by zero
-    normalized_tensor = (tensor - mean) / std
+    mean = torch.zeros(1, tensor.shape[-1], device=tensor.device, requires_grad=False)
+    std = torch.ones(1, tensor.shape[-1], device=tensor.device, requires_grad=False)
+    mean[:] = torch.mean(tensor, dim=[i for i in range(tensor.dim() - 1)], keepdim=True,)
+    std[:] = torch.std(tensor, dim=[i for i in range(tensor.dim() - 1)], keepdim=True) + 1e-8  # Add small value to avoid division by zero
+    with torch.no_grad():
+        normalized_tensor = (tensor - mean) / std
 
     return normalized_tensor, mean, std
 
 
 def process_inputs(data: torch.Tensor, stride: int, num_hist: int, prediction: bool) -> torch.Tensor:
-    """ Create history vectors
+    """Create history vectors
     Args:
         data (torch.Tensor): Input tensor of shape (batch_size, feature_dim)
         stride (int): Stride between history steps
@@ -39,8 +42,9 @@ def process_inputs(data: torch.Tensor, stride: int, num_hist: int, prediction: b
 
     return hist_tensor.to(data.device)
 
-def process_inputs_for_rnn(data: torch.Tensor, sequence_length: int, prediction: bool) -> torch.Tensor:
-    """ Turn inputs into sequences for RNN input
+
+def process_inputs_time_series(data: torch.Tensor, sequence_length: int, prediction: bool) -> torch.Tensor:
+    """Turn inputs into sequences short sequences of timesries
     Args:
         data (torch.Tensor): Input tensor of shape (batch_size, feature_dim)
         sequence_length (int): Length of the input sequences
@@ -62,8 +66,9 @@ def process_inputs_for_rnn(data: torch.Tensor, sequence_length: int, prediction:
 
     return input_tensor.to(data.device)
 
+
 def process_outputs(data: torch.Tensor, stride: int, num_hist: int, prediction: bool) -> torch.Tensor:
-    """ Create future output vectors
+    """Create future output vectors
     Args:
         data (torch.Tensor): Input tensor of shape (batch_size, feature_dim)
         stride (int): Stride between future steps
@@ -78,15 +83,16 @@ def process_outputs(data: torch.Tensor, stride: int, num_hist: int, prediction: 
         if i + (num_hist + (0 if prediction else -1)) * stride >= batch_size:
             break
         one_step = torch.zeros((feature_dim), device=data.device)
-        one_step[:] = data[i + (num_hist + (0 if prediction else -1)) * stride] # + since we're predicting the next step after history
+        one_step[:] = data[i + (num_hist + (0 if prediction else -1)) * stride]  # + since we're predicting the next step after history
         history_vector.append(one_step)
-    
+
     hist_tensor = torch.stack(history_vector)
 
     return hist_tensor.to(data.device)
 
-def process_outputs_for_rnn(data: torch.Tensor, sequence_length: int, prediction: bool) -> torch.Tensor:
-    """ Create future output vectors for RNN
+
+def process_outputs_time_series(data: torch.Tensor, sequence_length: int, prediction: bool) -> torch.Tensor:
+    """Create future output vectors for RNN
     Args:
         data (torch.Tensor): Input tensor of shape (batch_size, feature_dim)
         sequence_length (int): Length of the input sequences
@@ -100,12 +106,13 @@ def process_outputs_for_rnn(data: torch.Tensor, sequence_length: int, prediction
         if i + (sequence_length + (0 if prediction else -1)) >= batch_size:
             break
         one_output = torch.zeros((1, feature_dim), device=data.device)
-        one_output[:] = data[i + (sequence_length + (0 if prediction else -1))] # + since we're predicting the next step after history
+        one_output[:] = data[i + (sequence_length + (0 if prediction else -1))]  # + since we're predicting the next step after history
         output_vectors.append(one_output)
-    
+
     output_tensor = torch.stack(output_vectors)
 
     return output_tensor.to(data.device)
+
 
 def pandas_to_torch(df, device="cpu"):
     """
@@ -123,3 +130,23 @@ def pandas_to_torch(df, device="cpu"):
     tensor = torch.tensor(np_array, dtype=torch.float32, device=device)
 
     return col_indices, tensor
+
+
+class TimeSeriesDataset(torch.utils.data.Dataset):
+    def __init__(self, data: torch.Tensor, sequence_length=80):
+        """
+        data: tensor array of shape (num_samples, num_features)
+        sequence_length: number of timesteps to use for prediction
+        """
+        self.sequence_length = sequence_length
+        self.data = data
+
+    def __len__(self):
+        return len(self.data) - self.sequence_length
+
+    def __getitem__(self, idx):
+        x = self.data[idx : idx + self.sequence_length]  # shape: (80, 3)
+
+        y = self.data[idx + self.sequence_length]  # shape: (3,)
+
+        return x, y
