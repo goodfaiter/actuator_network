@@ -21,3 +21,5 @@ services:
     volumes:
       - ./:/workspace
     command: tail -f /dev/null
+    environment:
+      - WANDB_API_KEY=0
