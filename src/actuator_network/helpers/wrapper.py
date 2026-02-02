@@ -24,12 +24,15 @@ class ScaledModelWrapper(nn.Module):
         frequency: int = 1,
         history_size: int = 1,
         stride: int = 1,
+        seq_length: int = 0,
         prediction: bool = False,
         input_columns: list[str] = [],
         output_columns: list[str] = [],
     ):
         super().__init__()
         self.model = model
+
+        self.model_type = type(model).__name__
 
         # Register scaling as buffers (so they're saved in state_dict)
         self.register_buffer("input_mean", input_mean)
@@ -39,6 +42,7 @@ class ScaledModelWrapper(nn.Module):
         self.register_buffer("frequency", torch.tensor(frequency, dtype=torch.int32, requires_grad=False))
         self.register_buffer("history_size", torch.tensor(history_size, dtype=torch.int32, requires_grad=False))
         self.register_buffer("stride", torch.tensor(stride, dtype=torch.int32, requires_grad=False))
+        self.register_buffer("seq_length", torch.tensor(seq_length, dtype=torch.int32, requires_grad=False))
         self.register_buffer("prediction_mode", torch.tensor(prediction, dtype=torch.bool, requires_grad=False))
         if hasattr(model, "rnn") and model.rnn is not None:
             self.register_buffer("h0", torch.zeros(model.num_layers, 1, model.hidden_size))
