@@ -6,9 +6,6 @@ from helpers.pandas_to_mcap import data_df_to_mcap
 from helpers.wrapper import ScaledModelWrapper, ModelSaver
 from helpers.torch_model import TorchMlpModel
 from helpers.trainer import train
-import os
-
-os.environ["WANDB_API_KEY"] = ""
 
 
 def main():
@@ -19,21 +16,9 @@ def main():
     prediction = False  # Whether we are doing prediction or estimation
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     input_cols = ["desired_position_rad_data", "measured_position_rad_data", "measured_velocity_rad_per_sec_data"]
-    # input_cols = ["delta_position_rad_data", "measured_velocity_rad_per_sec_data"]
     output_cols = ["load_newton_data"]
-    # output_cols = ["load_newton_data"]
     mcap_file_paths = [
-        ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_18_06_0.mcap", None), 
-        ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_24_12_0.mcap", None),
-        ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_28_01_0.mcap", None),
-        ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_32_59_0.mcap", None),
-        ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_43_27_0.mcap", None),
-        ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_45_05_0.mcap", None),
-        ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_46_19_0.mcap", None),
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-14_00_33_0.mcap", None),
-        ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-14_16_41_0.mcap", None),
-        ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-14_18_00_0.mcap", None),
-        ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-14_19_28_0.mcap", None),
+        ("/path/to/rosbag2.mcap", None), 
     ]
 
     all_inputs = torch.empty((0, len(input_cols) * num_hist), device=device)
@@ -43,7 +28,6 @@ def main():
         data_df_extrapolated = extrapolate_dataframe(data_df, freq=freq)
         process_dataframe(data_df_extrapolated, spring_constant=spring_constant)
         data_df_to_mcap(data_df_extrapolated, mcap_file_path.replace(".mcap", "_processed"))
-        # data_df_extrapolated.to_csv(mcap_file_path.replace(".mcap", "_processed.csv"))
         col_names, data_tensor = pandas_to_torch(data_df_extrapolated, device=device)
         input_indices = [col_names.index(col) for col in input_cols]
         output_indices = [col_names.index(col) for col in output_cols]

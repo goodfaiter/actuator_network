@@ -4,11 +4,8 @@ from helpers.pandas_processing import extrapolate_dataframe, process_dataframe
 from helpers.pandas_to_torch import pandas_to_torch, process_inputs_time_series, normalize_tensor, process_outputs_time_series
 from helpers.pandas_to_mcap import data_df_to_mcap
 from helpers.wrapper import ScaledModelWrapper, ModelSaver
-from helpers.torch_model import TorchRNNModel, TorchTransformerModel
+from helpers.torch_model import TorchRNNModel
 from helpers.trainer import train
-import os
-
-os.environ["WANDB_API_KEY"] = ""
 
 
 def main():
@@ -18,21 +15,9 @@ def main():
     seq_length = 120  # Sequence length for RNN
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     input_cols = ["desired_position_rad_data", "measured_position_rad_data", "measured_velocity_rad_per_sec_data"]
-    # input_cols = ["delta_position_rad_data", "measured_velocity_rad_per_sec_data"]
-    # output_cols = ["calculated_acceleration_meter_per_sec2_data", "load_newton_data"]
     output_cols = ["load_newton_data"]
     mcap_file_paths = [
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_18_06_0.mcap", None),
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_24_12_0.mcap", None),
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_28_01_0.mcap", None),
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_32_59_0.mcap", None),
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_43_27_0.mcap", None),
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_45_05_0.mcap", None),
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_46_19_0.mcap", None),
-        ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-14_00_33_0.mcap", None),
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-14_16_41_0.mcap", None),
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-14_18_00_0.mcap", None),
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-14_19_28_0.mcap", None),
+        ("/path/to/rosbag2.mcap", None),
     ]
 
     all_inputs = torch.empty((0, seq_length, len(input_cols)), device=device)
