@@ -55,27 +55,27 @@ def process_dataframe(df: pd.DataFrame, spring_constant: float = None) -> pd.Dat
     df["calculated_acceleration_meter_per_sec2_data"] = derivate_signal(df["measured_velocity_rad_per_sec_data"], dt=1 / 80) * radius
 
     weight_offset = df["weight_kg_data"][:num_samples_for_offset].mean()
-    acceleration_offset_x = df["imu_data_raw_linear_acceleration_x"][:num_samples_for_offset].mean()
-    acceleration_offset_y = df["imu_data_raw_linear_acceleration_y"][:num_samples_for_offset].mean()
-    acceleration_offset_z = df["imu_data_raw_linear_acceleration_z"][:num_samples_for_offset].mean()
+    # acceleration_offset_x = df["imu_data_raw_linear_acceleration_x"][:num_samples_for_offset].mean()
+    # acceleration_offset_y = df["imu_data_raw_linear_acceleration_y"][:num_samples_for_offset].mean()
+    # acceleration_offset_z = df["imu_data_raw_linear_acceleration_z"][:num_samples_for_offset].mean()
 
     df["weight_kg_data"] = df["weight_kg_data"] - weight_offset
     df["load_newton_data"] = df["weight_kg_data"] * g
-    df["imu_data_raw_linear_acceleration_x"] = df["imu_data_raw_linear_acceleration_x"] - acceleration_offset_x
-    df["imu_data_raw_linear_acceleration_y"] = df["imu_data_raw_linear_acceleration_y"] - acceleration_offset_y
-    df["imu_data_raw_linear_acceleration_z"] = df["imu_data_raw_linear_acceleration_z"] - acceleration_offset_z
+    # df["imu_data_raw_linear_acceleration_x"] = df["imu_data_raw_linear_acceleration_x"] - acceleration_offset_x
+    # df["imu_data_raw_linear_acceleration_y"] = df["imu_data_raw_linear_acceleration_y"] - acceleration_offset_y
+    # df["imu_data_raw_linear_acceleration_z"] = df["imu_data_raw_linear_acceleration_z"] - acceleration_offset_z
 
     # filter acceleration
-    df["imu_data_raw_linear_acceleration_x_filtered"] = filter_signal(df["imu_data_raw_linear_acceleration_x"])
-    df["imu_data_raw_linear_acceleration_y_filtered"] = filter_signal(df["imu_data_raw_linear_acceleration_y"])
-    df["imu_data_raw_linear_acceleration_z_filtered"] = filter_signal(df["imu_data_raw_linear_acceleration_z"])
+    # df["imu_data_raw_linear_acceleration_x_filtered"] = filter_signal(df["imu_data_raw_linear_acceleration_x"])
+    # df["imu_data_raw_linear_acceleration_y_filtered"] = filter_signal(df["imu_data_raw_linear_acceleration_y"])
+    # df["imu_data_raw_linear_acceleration_z_filtered"] = filter_signal(df["imu_data_raw_linear_acceleration_z"])
 
-    df["measured_acceleration"] = (
-        df["imu_data_raw_linear_acceleration_x_filtered"] ** 2
-        + df["imu_data_raw_linear_acceleration_y_filtered"] ** 2
-        + df["imu_data_raw_linear_acceleration_z_filtered"] ** 2
-    )
-    df["measured_acceleration"] = df["measured_acceleration"].pow(0.5)
+    # df["measured_acceleration"] = (
+    #     df["imu_data_raw_linear_acceleration_x_filtered"] ** 2
+    #     + df["imu_data_raw_linear_acceleration_y_filtered"] ** 2
+    #     + df["imu_data_raw_linear_acceleration_z_filtered"] ** 2
+    # )
+    # df["measured_acceleration"] = df["measured_acceleration"].pow(0.5)
 
     df["tendon_force_newton_data"] = df["load_newton_data"] + (df["calculated_acceleration_meter_per_sec2_data"] * mass)
 
