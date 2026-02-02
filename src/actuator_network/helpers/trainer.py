@@ -3,7 +3,7 @@ import wandb
 from helpers.wrapper import ScaledModelWrapper, ModelSaver
 
 
-def split_data(inputs, outputs, train_ratio=0.8):
+def split_data(inputs, outputs, train_ratio=0.9):
     """Split inputs and outputs into training and validation sets
     Args:
         inputs (torch.Tensor): Input tensor of shape (num_samples, input_dim)
@@ -53,14 +53,15 @@ def train(model, inputs, outputs, model_saver: ModelSaver = None):
     num_epochs = 100
     learning_rate = 0.001
     batch_size = 64
+    train_ratio = 0.9
 
     wandb.init(project="actuator_network")
-    wandb.config.update({"learning_rate": learning_rate, "batch_size": batch_size, "num_epochs": num_epochs, "train_ratio": 0.8})
+    wandb.config.update({"learning_rate": learning_rate, "batch_size": batch_size, "num_epochs": num_epochs, "train_ratio": train_ratio})
+    wandb.log({"Model": str(model)})
     # wandb.watch(model, log="all", log_freq=100)
 
     # Split data
-    inputs_train, outputs_train, inputs_val, outputs_val = split_data(inputs, outputs)
-
+    inputs_train, outputs_train, inputs_val, outputs_val = split_data(inputs, outputs, train_ratio=train_ratio)
     criterion = torch.nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
@@ -98,7 +99,7 @@ def train(model, inputs, outputs, model_saver: ModelSaver = None):
 
         wandb.log({"train_loss": avg_train_loss, "val_loss": val_loss.item(), "epoch": epoch + 1})
 
-        # save every 100
+        # Save every 100 epochs
         if (epoch + 1) % 100 == 0:
             model_saver.save_model(f"_epoch_{epoch + 1}")
 
