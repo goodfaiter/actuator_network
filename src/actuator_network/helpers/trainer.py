@@ -15,6 +15,10 @@ def split_data(inputs, outputs, train_ratio=0.9):
     num_samples = inputs.shape[0]
     train_size = int(num_samples * train_ratio)
 
+    indices = torch.randperm(num_samples)
+    inputs = inputs[indices]
+    outputs = outputs[indices]
+
     train_inputs = inputs[:train_size]
     train_outputs = outputs[:train_size]
     val_inputs = inputs[train_size:]
