@@ -9,9 +9,9 @@ def main():
     mcap_file_paths = [
         # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-14_00_33_0.mcap", None), # test
         # ("/workspace/data/training_data/2026_01_30/rosbag2_2026_01_30-14_59_00_0.mcap", None),
-        ("/workspace/data/training_data/2026_01_30/rosbag2_2026_01_30-15_05_30_0.mcap", None),  # untrained, test
+        # ("/workspace/data/training_data/2026_01_30/rosbag2_2026_01_30-15_05_30_0.mcap", None),  # untrained, test
         # ("/workspace/data/training_data/2026_02_02/rosbag2_2026_02_02-16_50_51_0.mcap", None),
-        ("/workspace/data/training_data/2026_02_02/rosbag2_2026_02_02-16_58_13_0.mcap", None), # untrained, test
+        # ("/workspace/data/training_data/2026_02_02/rosbag2_2026_02_02-16_58_13_0.mcap", None), # untrained, test
         ("/workspace/data/training_data/2026_02_25/rosbag2_2026_02_25-16_51_17_0.mcap", None), # finger slow step test
         ("/workspace/data/training_data/2026_02_25/rosbag2_2026_02_25-17_05_21_0.mcap", None), # weak spring slow step tes
     ]
@@ -36,7 +36,7 @@ def main():
         col_names, data_tensor = pandas_to_torch(data_df_extrapolated, device="cpu")
         input_indices = [col_names.index(col) for col in input_cols]
         if model_type == "TorchRNNModel":
-            inputs = process_inputs_time_series(data_tensor[:, input_indices], sequence_length=1, prediction=prediction)
+            inputs = process_inputs_time_series(data_tensor[:, input_indices], history_size=num_hist, stride=stride, prediction=prediction)
         elif model_type == "TorchTransformerModel":
             inputs = process_inputs_time_series(data_tensor[:, input_indices], history_size=num_hist, stride=stride, prediction=prediction)
         else:
@@ -61,14 +61,13 @@ def main():
             for i, col in enumerate(output_cols):
                 data_df_extrapolated[col + "_predicted"].iloc[(num_hist + (0 if prediction else -1)) * stride :] = predictions[:, i].numpy()
 
-        # for i in range (inputs.shape[0]):
-        #     input_sample = inputs[i, ...].unsqueeze(0)  # Keep batch dimension
-        #     with torch.no_grad():
-        #         pred = model(input_sample)
-        #     predictions[i, :] = pred
-
-        # for i, col in enumerate(output_cols):
-        #     data_df_extrapolated[col + "_predicted"].iloc[(num_hist + (0 if prediction else -1)) * stride:] = predictions[:, i].numpy()
+        if model_type in ["TorchRNNModel"]:
+            for i in range(inputs.shape[0]):
+                with torch.no_grad():
+                    pred = model(inputs[i, ...].unsqueeze(0)) # Keep batch dimension
+                predictions[i, :] = pred
+            for i, col in enumerate(output_cols):
+                data_df_extrapolated[col + "_predicted"].iloc[:] = predictions[:, i].numpy()
 
         # Save the dataframe with predictions
         data_df_to_mcap(data_df_extrapolated, mcap_file_path.replace(".mcap", "_predicted"))
