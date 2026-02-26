@@ -125,9 +125,9 @@ class ModelSaver:
         self._wrapped_model.trace_and_save(save_path)
         self._wrapped_model.unfreeze()
 
-    def save_latest(self) -> None:
+    def save_latest(self, prefix: str) -> None:
         """Save the model as 'latest.pt' in the root folder"""
         self._wrapped_model.freeze()
-        save_path = os.path.join(self._root_folder, "latest.pt")
+        save_path = os.path.join(self._root_folder, f"{prefix}latest.pt")
         self._wrapped_model.trace_and_save(save_path)
         self._wrapped_model.unfreeze()

@@ -49,7 +49,7 @@ class TorchRNNModel(torch.nn.Module):
 
 class TorchTransformerModel(torch.nn.Module):
     def __init__(
-        self, input_size: int, output_size: int, num_layers: int, seq_length: int, num_heads: int, hidden_dim: int, device: torch.device
+        self, input_size: int, output_size: int, num_layers: int, history_size: int, num_heads: int, hidden_dim: int, device: torch.device
     ):
         super(TorchTransformerModel, self).__init__()
 
@@ -57,7 +57,7 @@ class TorchTransformerModel(torch.nn.Module):
         self.input_projection = torch.nn.Linear(input_size, hidden_dim, device=device)
 
         # Positional encoding
-        self.positional_encoding = PositionalEncoding(max_len=seq_length, hidden_dim=hidden_dim, device=device)
+        self.positional_encoding = PositionalEncoding(max_len=history_size, hidden_dim=hidden_dim, device=device)
 
         # Transformer encoder
         encoder_layer = torch.nn.TransformerEncoderLayer(
@@ -67,7 +67,7 @@ class TorchTransformerModel(torch.nn.Module):
             batch_first=True,
             device=device,
             dropout=0.1,
-            activation=torch.nn.Tanh(),
+            activation=torch.nn.ReLU(),
         )
         self.transformer = torch.nn.TransformerEncoder(
             encoder_layer,
@@ -77,14 +77,14 @@ class TorchTransformerModel(torch.nn.Module):
         # Output layer (taking only the last timestep)
         self.output_sequence = torch.nn.Sequential(
             torch.nn.Linear(hidden_dim, hidden_dim // 2, device=device),
-            torch.nn.Tanh(),
+            torch.nn.ReLU(),
             torch.nn.Linear(hidden_dim // 2, hidden_dim // 4, device=device),
-            torch.nn.Tanh(),
+            torch.nn.ReLU(),
             torch.nn.Linear(hidden_dim // 4, output_size, device=device),
         )
 
         # Causal mask
-        mask = torch.nn.Transformer.generate_square_subsequent_mask(seq_length).to(device)
+        mask = torch.nn.Transformer.generate_square_subsequent_mask(history_size).to(device)
         self.register_buffer("causal_mask", mask)
 
         # Store config
@@ -101,7 +101,8 @@ class TorchTransformerModel(torch.nn.Module):
         x = self.positional_encoding(x)
 
         # Transformer processing
-        x = self.transformer(x, mask=self.causal_mask, is_causal=True)
+        # x = self.transformer(x, mask=self.causal_mask, is_causal=True)
+        x = self.transformer(x)
 
         # Take only the last timestep and output
         x = x[:, -1, :]  # Take last timestep

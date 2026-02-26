@@ -107,10 +107,10 @@ def train(model, inputs, outputs, model_saver: ModelSaver = None):
         if val_loss.item() < best_val_loss:
             best_val_loss = val_loss.item()
             model_saver.save_model("_best")
-            model_saver.save_latest()
+            model_saver.save_latest("best_")
             print(f"New best model! Val loss: {best_val_loss:.4f}")
 
     model_saver.save_model("_final")
-
+    model_saver.save_latest("final_")
     # Clean up wandb
     wandb.finish()

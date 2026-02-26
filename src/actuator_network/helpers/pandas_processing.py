@@ -40,9 +40,9 @@ def derivate_signal(signal: pd.Series, dt: float) -> pd.Series:
 def process_dataframe(df: pd.DataFrame, spring_constant: float = None) -> pd.DataFrame:
     """Calculate the tendon force from weight and acceleration"""
     num_samples_for_offset = 40  # 0.5 seconds at 80Hz
-    mass = 0.02  # kg
+    mass = 0.03  # kg
     g = 9.81  # m/s^2
-    radius = 0.012  # m
+    radius = 0.010  # m
 
     df["delta_position_rad_data"] = df["desired_position_rad_data"] - df["measured_position_rad_data"]
 
@@ -51,15 +51,19 @@ def process_dataframe(df: pd.DataFrame, spring_constant: float = None) -> pd.Dat
     if spring_constant is not None:
         df["weight_kg_data"] = spring_constant * df["measured_position_rad_data"]
 
+    df["calculated_velocity_meter_per_sec_data"] = df["measured_velocity_rad_per_sec_data"] * radius
+
     # Acceleration of motor
     df["calculated_acceleration_meter_per_sec2_data"] = derivate_signal(df["measured_velocity_rad_per_sec_data"], dt=1 / 80) * radius
+    df["calculated_dynamic_force_newton_data"] = df["calculated_acceleration_meter_per_sec2_data"] * mass
 
-    weight_offset = df["weight_kg_data"][:num_samples_for_offset].mean()
+    # weight_offset = df["weight_kg_data"][:num_samples_for_offset].mean()
     # acceleration_offset_x = df["imu_data_raw_linear_acceleration_x"][:num_samples_for_offset].mean()
     # acceleration_offset_y = df["imu_data_raw_linear_acceleration_y"][:num_samples_for_offset].mean()
     # acceleration_offset_z = df["imu_data_raw_linear_acceleration_z"][:num_samples_for_offset].mean()
 
-    df["weight_kg_data"] = df["weight_kg_data"] - weight_offset
+    # df["weight_kg_data"] = df["weight_kg_data"] - weight_offset
+    df["weight_kg_data"] = df["weight_kg_data"]
     df["load_newton_data"] = df["weight_kg_data"] * g
     # df["imu_data_raw_linear_acceleration_x"] = df["imu_data_raw_linear_acceleration_x"] - acceleration_offset_x
     # df["imu_data_raw_linear_acceleration_y"] = df["imu_data_raw_linear_acceleration_y"] - acceleration_offset_y
@@ -77,7 +81,7 @@ def process_dataframe(df: pd.DataFrame, spring_constant: float = None) -> pd.Dat
     # )
     # df["measured_acceleration"] = df["measured_acceleration"].pow(0.5)
 
-    df["tendon_force_newton_data"] = df["load_newton_data"] + (df["calculated_acceleration_meter_per_sec2_data"] * mass)
+    df["tendon_force_newton_data"] = df["load_newton_data"] + df["calculated_dynamic_force_newton_data"]
 
     # reindex with new col
     df = df.reindex(columns=[*df.columns.tolist()])
