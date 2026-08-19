@@ -50,28 +50,26 @@ def process_inputs(data: torch.Tensor, stride: int, num_hist: int, prediction: b
 
 
 def process_inputs_time_series(data: torch.Tensor, history_size: int, stride: int, prediction: bool) -> torch.Tensor:
-    """Turn inputs into sequences short sequences of timesries
+    """Turn inputs into short sequences of time series looking forward.
+
     Args:
         data (torch.Tensor): Input tensor of shape (batch_size, feature_dim)
         history_size (int): Length of the input sequences
-        stride (int): Stride between sequences
-        prediction (bool): Whether this is for prediction or estimation (affects offset)
-        Returns:
+        stride (int): Stride between history steps
+        prediction (bool): Whether this is for prediction or estimation (currently unused)
+
+    Returns:
         torch.Tensor: Tensor with input sequences of shape (batch_size, history_size, feature_dim)
     """
     batch_size, feature_dim = data.shape
-    input_tensor = torch.zeros((batch_size, history_size, feature_dim), device=data.device)
-    one_sequence = torch.zeros((history_size, feature_dim), device=data.device)
-    for i in range(batch_size):
-        one_sequence[:] = 0.0
-        for j in range(history_size):
-            if i - j * stride < 0:
-                break
+    num_sequences = batch_size - (history_size - 1) * stride
+    if num_sequences <= 0:
+        return torch.empty((0, history_size, feature_dim), device=data.device)
 
-            one_sequence[-(1 + j), :] = data[i - j * stride]
-        input_tensor[i, :, :] = one_sequence
+    offsets = torch.arange(history_size, device=data.device) * stride
+    indices = torch.arange(num_sequences, device=data.device).unsqueeze(1) + offsets.unsqueeze(0)
 
-    return input_tensor.to(data.device)
+    return data[indices]
 
 
 def process_outputs(data: torch.Tensor, stride: int, num_hist: int, prediction: bool) -> torch.Tensor:
@@ -100,22 +98,24 @@ def process_outputs(data: torch.Tensor, stride: int, num_hist: int, prediction: 
     return hist_tensor.to(data.device)
 
 
-def process_outputs_time_series(data: torch.Tensor, stride: int, history_size: int, prediction: bool) -> torch.Tensor:
-    """Create future output vectors for RNN
+def process_outputs_time_series(data: torch.Tensor, stride: int, history_size: int) -> torch.Tensor:
+    """Create output vectors matching the last index of each input sequence.
+
     Args:
         data (torch.Tensor): Input tensor of shape (batch_size, feature_dim)
         stride (int): Stride between history steps
-        history_size (int): Number of history steps to include
-        prediction (bool): Whether this is for prediction or estimation (affects offset)
+        history_size (int): Number of history steps in each input sequence
+
     Returns:
-        torch.Tensor: Tensor with future output vectors of shape (num_sequences, feature_dim)
+        torch.Tensor: Tensor with output vectors of shape (batch_size, 1, feature_dim)
     """
     batch_size, feature_dim = data.shape
-    output_tensor = torch.zeros((batch_size, 1, feature_dim), device=data.device)
-    for i in range(batch_size):
-        output_tensor[i, 0, :] = data[i]
+    num_sequences = batch_size - (history_size - 1) * stride
+    if num_sequences <= 0:
+        return torch.empty((0, 1, feature_dim), device=data.device)
 
-    return output_tensor.to(data.device)
+    target_index = torch.arange(num_sequences, device=data.device) + (history_size - 1) * stride
+    return data[target_index].unsqueeze(1)
 
 
 def pandas_to_torch(df, device="cpu"):

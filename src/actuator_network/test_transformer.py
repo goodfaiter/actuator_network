@@ -24,6 +24,8 @@ def main():
     for mcap_file_path in mcap_file_paths:
         data_df = read_mcap_to_dataframe(mcap_file_path)
         data_df_extrapolated = extrapolate_dataframe(data_df, freq=data_freq)
+        # Remove duplicate timestamps by keeping the first occurrence
+        data_df_extrapolated = data_df_extrapolated.groupby(data_df_extrapolated.index).first()
         process_dataframe(data_df_extrapolated)
         col_names, data_tensor = pandas_to_torch(data_df_extrapolated, device="cpu")
         input_indices = [col_names.index(col) for col in input_cols]
@@ -39,8 +41,11 @@ def main():
         with torch.no_grad():
             preds = model(inputs)
         predictions[:, :] = preds[:, 0, :]  # Take the first time step
+        offset = (num_hist - 1) * stride
         for i, col in enumerate(output_cols):
-            data_df_extrapolated[col + "_predicted"].iloc[:] = predictions[:, i].numpy()
+            data_df_extrapolated[col + "_predicted"].iloc[offset : offset + predictions.shape[0]] = predictions[
+                :, i
+            ].numpy()
 
         # Save the dataframe with predictions
         data_df_to_mcap(data_df_extrapolated, mcap_file_path.replace(".mcap", "_predicted.mcap"))

@@ -23,7 +23,7 @@ def main():
     history_size = 30
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     input_cols = ["delta_position_rad_data", "measured_velocity_rad_per_sec_data"]
-    output_cols = ["load_newton_data"]
+    output_cols = ["tendon_bota_force_newton_data"]
     mcap_file_paths = [
         "/workspace/data/training_data/2026_08_19/rosbag2_2026_08_19-12_40_03_0.mcap",
     ]
@@ -43,9 +43,7 @@ def main():
         inputs = process_inputs_time_series(
             data_tensor[:, input_indices], stride=stride, history_size=history_size, prediction=prediction
         )
-        outputs = process_outputs_time_series(
-            data_tensor[:, output_indices], stride=stride, history_size=history_size, prediction=prediction
-        )
+        outputs = process_outputs_time_series(data_tensor[:, output_indices], stride=stride, history_size=history_size)
         all_inputs = torch.cat((all_inputs, inputs), dim=0)
         all_outputs = torch.cat((all_outputs, outputs), dim=0)
 
