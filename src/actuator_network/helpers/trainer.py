@@ -54,9 +54,9 @@ def train(model, inputs, outputs, model_saver: ModelSaver = None):
         outputs: Output tensor
         model_saver: ModelSaver instance for saving
     """
-    num_epochs = 100
+    num_epochs = 50
     learning_rate = 0.001
-    batch_size = 64
+    batch_size = 1024
     train_ratio = 0.9
 
     wandb.init(project="actuator_network")

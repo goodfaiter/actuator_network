@@ -20,51 +20,72 @@ def main():
     # input_cols = ["delta_position_rad_data", "measured_velocity_rad_per_sec_data"]
     output_cols = ["load_newton_data"]
     mcap_file_paths = [
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_45_05_0.mcap", None),  # zero data set
-        ("/workspace/data/training_data/2026_01_30/rosbag2_2026_01_30-14_55_45_0.mcap", None),
-        ("/workspace/data/training_data/2026_01_30/rosbag2_2026_01_30-14_57_32_0.mcap", None),
-        ("/workspace/data/training_data/2026_01_30/rosbag2_2026_01_30-14_59_00_0.mcap", None),
-        ("/workspace/data/training_data/2026_01_30/rosbag2_2026_01_30-14_59_58_0.mcap", None),
-        ("/workspace/data/training_data/2026_01_30/rosbag2_2026_01_30-15_01_44_0.mcap", None),
-        ("/workspace/data/training_data/2026_01_30/rosbag2_2026_01_30-15_03_59_0.mcap", None),
-        ("/workspace/data/training_data/2026_01_30/rosbag2_2026_01_30-15_05_30_0.mcap", None),  # test
-        ("/workspace/data/training_data/2026_02_02/rosbag2_2026_02_02-16_50_51_0.mcap", None),
-        ("/workspace/data/training_data/2026_02_02/rosbag2_2026_02_02-16_52_21_0.mcap", None),
-        ("/workspace/data/training_data/2026_02_02/rosbag2_2026_02_02-16_55_56_0.mcap", None),
-        ("/workspace/data/training_data/2026_02_02/rosbag2_2026_02_02-16_58_13_0.mcap", None),  # test
-        ("/workspace/data/training_data/2026_02_02/rosbag2_2026_02_02-16_59_40_0.mcap", None),
-        ("/workspace/data/training_data/2026_02_12/rosbag2_2026_02_12-15_53_55_0.mcap", None), # with RL
-        ("/workspace/data/training_data/2026_02_12/rosbag2_2026_02_12-15_55_22_0.mcap", None), # zero
+        "/workspace/data/training_data/2026_01_30/rosbag2_2026_01_30-14_55_45_0.mcap",
+        "/workspace/data/training_data/2026_01_30/rosbag2_2026_01_30-14_57_32_0.mcap",
+        "/workspace/data/training_data/2026_01_30/rosbag2_2026_01_30-14_59_00_0.mcap",
+        "/workspace/data/training_data/2026_01_30/rosbag2_2026_01_30-14_59_58_0.mcap",
+        "/workspace/data/training_data/2026_01_30/rosbag2_2026_01_30-15_01_44_0.mcap",
+        "/workspace/data/training_data/2026_01_30/rosbag2_2026_01_30-15_03_59_0.mcap",
+        "/workspace/data/training_data/2026_01_30/rosbag2_2026_01_30-15_05_30_0.mcap",  # test
+        "/workspace/data/training_data/2026_02_02/rosbag2_2026_02_02-16_50_51_0.mcap",
+        "/workspace/data/training_data/2026_02_02/rosbag2_2026_02_02-16_52_21_0.mcap",
+        "/workspace/data/training_data/2026_02_02/rosbag2_2026_02_02-16_55_56_0.mcap",
+        "/workspace/data/training_data/2026_02_02/rosbag2_2026_02_02-16_58_13_0.mcap",  # test
+        "/workspace/data/training_data/2026_02_02/rosbag2_2026_02_02-16_59_40_0.mcap",
+        "/workspace/data/training_data/2026_02_12/rosbag2_2026_02_12-15_53_55_0.mcap", # with RL
+        "/workspace/data/training_data/2026_02_12/rosbag2_2026_02_12-15_55_22_0.mcap", # zero
 
-        ("/workspace/data/training_data/2026_02_13/rosbag2_2026_02_13-12_48_26_0.mcap", None), # RL
-        ("/workspace/data/training_data/2026_02_13/rosbag2_2026_02_13-12_58_23_0.mcap", None), # RL
+        "/workspace/data/training_data/2026_02_13/rosbag2_2026_02_13-12_48_26_0.mcap", # RL
+        "/workspace/data/training_data/2026_02_13/rosbag2_2026_02_13-12_58_23_0.mcap", # RL
 
-        ("/workspace/data/training_data/2026_02_25/rosbag2_2026_02_25-16_48_31_0.mcap", None),
-        # ("/workspace/data/training_data/2026_02_25/rosbag2_2026_02_25-16_51_17_0.mcap", None), # finger slow step test
-        ("/workspace/data/training_data/2026_02_25/rosbag2_2026_02_25-16_53_16_0.mcap", None),
-        ("/workspace/data/training_data/2026_02_25/rosbag2_2026_02_25-16_53_59_0.mcap", None),
-        ("/workspace/data/training_data/2026_02_25/rosbag2_2026_02_25-16_55_49_0.mcap", None),
-        ("/workspace/data/training_data/2026_02_25/rosbag2_2026_02_25-17_03_48_0.mcap", None),
-        ("/workspace/data/training_data/2026_02_25/rosbag2_2026_02_25-17_05_21_0.mcap", None), # weak spring slow step test
+        "/workspace/data/training_data/2026_02_25/rosbag2_2026_02_25-16_48_31_0.mcap",
+        "/workspace/data/training_data/2026_02_25/rosbag2_2026_02_25-16_51_17_0.mcap", # finger slow step test
+        "/workspace/data/training_data/2026_02_25/rosbag2_2026_02_25-16_53_16_0.mcap",
+        "/workspace/data/training_data/2026_02_25/rosbag2_2026_02_25-16_53_59_0.mcap",
+        "/workspace/data/training_data/2026_02_25/rosbag2_2026_02_25-16_55_49_0.mcap",
+        "/workspace/data/training_data/2026_02_25/rosbag2_2026_02_25-17_03_48_0.mcap",
+        "/workspace/data/training_data/2026_02_25/rosbag2_2026_02_25-17_05_21_0.mcap", # weak spring slow step test
 
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_18_06_0.mcap", None),
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_24_12_0.mcap", None),
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_28_01_0.mcap", None),
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_32_59_0.mcap", None),
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_43_27_0.mcap", None),
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-13_46_19_0.mcap", None),
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-14_00_33_0.mcap", None), # test
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-14_16_41_0.mcap", None),
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-14_18_00_0.mcap", None),
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-14_19_28_0.mcap", None),
+        "/workspace/data/training_data/2026_02_26/rosbag2_2026_02_26-07_19_08_0.mcap",
+        "/workspace/data/training_data/2026_02_26/rosbag2_2026_02_26-07_25_25_0.mcap",
+        "/workspace/data/training_data/2026_02_26/rosbag2_2026_02_26-07_27_34_0.mcap",
+        "/workspace/data/training_data/2026_02_26/rosbag2_2026_02_26-07_29_45_0.mcap",
+        # ("/workspace/data/training_data/2026_02_26/rosbag2_2026_02_26-07_17_29_0.mcap", None), # test data weak spring
+        # ("/workspace/data/training_data/2026_02_26/rosbag2_2026_02_26-07_31_02_0.mcap", None), # test data strong spring
+        # ("/workspace/data/training_data/2026_02_26/rosbag2_2026_02_26-07_34_26_0.mcap", None), # test data finger
+        "/workspace/data/training_data/2026_02_26/rosbag2_2026_02_26-08_40_42_0.mcap", # 3s holds finger
+        "/workspace/data/training_data/2026_02_26/rosbag2_2026_02_26-08_49_08_0.mcap", # 3s holds strong spring
+        "/workspace/data/training_data/2026_02_26/rosbag2_2026_02_26-08_57_10_0.mcap", # 3s holds weak spring
+
+        "/workspace/data/training_data/2026_02_27/rosbag2_2026_02_27-15_38_59_0.mcap",
+        "/workspace/data/training_data/2026_02_27/rosbag2_2026_02_27-15_42_17_0.mcap",
+        "/workspace/data/training_data/2026_02_28/rosbag2_2026_02_28-09_02_59_0.mcap",
+
+        "/workspace/data/training_data/2026_02_28/mlp_30_model_steps_rosbag2_2026_02_28-09_30_03_0.mcap",
+        "/workspace/data/training_data/2026_02_28/mlp_30_pure_rosbag2_2026_02_28-09_41_03_0.mcap",
+
+        "/workspace/data/training_data/2026_03_03/rosbag2_2026_03_03-13_21_08_0.mcap", 
+        "/workspace/data/training_data/2026_03_03/rosbag2_2026_03_03-13_44_47_0.mcap",
+        "/workspace/data/training_data/2026_03_03/rosbag2_2026_03_03-13_46_01_0.mcap",
+        "/workspace/data/training_data/2026_03_03/rosbag2_2026_03_03-14_05_04_0.mcap",
+
+        # "/workspace/data/training_data/2026_03_03/rosbag2_2026_03_03-15_35_25_0.mcap", # test for paper
+        # "/workspace/data/training_data/2026_03_03/rosbag2_2026_03_03-15_37_21_0.mcap", # test for paper
+        # "/workspace/data/training_data/2026_03_03/rosbag2_2026_03_03-15_38_00_0.mcap", # test for paper
+
+        "/workspace/data/training_data/2026_03_03/rosbag2_2026_03_03-16_50_04_0.mcap",
+        "/workspace/data/training_data/2026_03_03/rosbag2_2026_03_03-17_04_45_0.mcap",
+        
+        
     ]
 
     all_inputs = torch.empty((0, history_size, len(input_cols)), device=device)
     all_outputs = torch.empty((0, 1, len(output_cols)), device=device)
-    for mcap_file_path, spring_constant in mcap_file_paths:
+    for mcap_file_path in mcap_file_paths:
         data_df = read_mcap_to_dataframe(mcap_file_path)
         data_df_extrapolated = extrapolate_dataframe(data_df, freq=data_freq)
-        process_dataframe(data_df_extrapolated, spring_constant=spring_constant)
+        data_df_extrapolated = data_df_extrapolated.groupby(data_df_extrapolated.index).first()  # Remove duplicate timestamps by keeping the first occurrence
+        process_dataframe(data_df_extrapolated)
         data_df_to_mcap(data_df_extrapolated, mcap_file_path.replace(".mcap", "_processed"))
         col_names, data_tensor = pandas_to_torch(data_df_extrapolated, device=device)
         input_indices = [col_names.index(col) for col in input_cols]
@@ -84,7 +105,7 @@ def main():
         num_layers=2,
         history_size=history_size,
         num_heads=4,
-        hidden_dim=16,
+        hidden_dim=32,
         device=device,
     )
     wrapped_model = ScaledModelWrapper(

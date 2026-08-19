@@ -7,16 +7,25 @@ from helpers.pandas_to_mcap import data_df_to_mcap
 
 def main():
     mcap_file_paths = [
-        # ("/workspace/data/training_data/2026_01_28/rosbag2_2026_01_28-14_00_33_0.mcap", None), # test
-        # ("/workspace/data/training_data/2026_01_30/rosbag2_2026_01_30-14_59_00_0.mcap", None),
-        # ("/workspace/data/training_data/2026_01_30/rosbag2_2026_01_30-15_05_30_0.mcap", None),  # untrained, test
-        # ("/workspace/data/training_data/2026_02_02/rosbag2_2026_02_02-16_50_51_0.mcap", None),
-        # ("/workspace/data/training_data/2026_02_02/rosbag2_2026_02_02-16_58_13_0.mcap", None), # untrained, test
-        ("/workspace/data/training_data/2026_02_25/rosbag2_2026_02_25-16_51_17_0.mcap", None), # finger slow step test
-        ("/workspace/data/training_data/2026_02_25/rosbag2_2026_02_25-17_05_21_0.mcap", None), # weak spring slow step tes
+        # "/workspace/data/training_data/2026_02_26/rosbag2_2026_02_26-09_17_44_0.mcap", # strong
+        # "/workspace/data/training_data/2026_02_26/rosbag2_2026_02_26-09_23_45_0.mcap", # weak
+        # "/workspace/data/training_data/2026_02_26/rosbag2_2026_02_26-09_29_17_0.mcap", # finger
+        # "/workspace/data/training_data/2026_03_03/rosbag2_2026_03_03-13_44_47_0.mcap",
+        # "/workspace/data/training_data/2026_03_03/rosbag2_2026_03_03-13_46_01_0.mcap",
+
+        # "/workspace/data/training_data/2026_03_03/rosbag2_2026_03_03-15_35_25_0.mcap", 
+        # "/workspace/data/training_data/2026_03_03/rosbag2_2026_03_03-15_37_21_0.mcap",
+        # "/workspace/data/training_data/2026_03_03/rosbag2_2026_03_03-15_38_00_0.mcap",
+
+        # "/workspace/data/training_data/2026_03_03/rosbag2_2026_03_03-16_50_04_0.mcap",
+        "/workspace/data/training_data/2026_03_03/rosbag2_2026_03_03-17_05_48_0.mcap",
+        
+        
     ]
 
     file_path = "/workspace/data/output_data/final_latest.pt"
+    # file_path = "/workspace/data/output_data/2026_03_03_15_10_41/2026_03_03_15_10_41_final.pt"
+    # file_path = "/workspace/data/output_data/best_latest_trans_30.pt"
     model = torch.jit.load(file_path, map_location="cpu")
 
     data_freq = 80
@@ -29,10 +38,10 @@ def main():
 
     model_type = model.model_type  # TorchTransformerModel, TorchRNNModel, or TorchMlpModel
 
-    for mcap_file_path, spring_constant in mcap_file_paths:
+    for mcap_file_path in mcap_file_paths:
         data_df = read_mcap_to_dataframe(mcap_file_path)
         data_df_extrapolated = extrapolate_dataframe(data_df, freq=data_freq)
-        process_dataframe(data_df_extrapolated, spring_constant=spring_constant)
+        process_dataframe(data_df_extrapolated)
         col_names, data_tensor = pandas_to_torch(data_df_extrapolated, device="cpu")
         input_indices = [col_names.index(col) for col in input_cols]
         if model_type == "TorchRNNModel":

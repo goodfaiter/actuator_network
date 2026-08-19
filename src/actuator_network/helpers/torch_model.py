@@ -101,8 +101,8 @@ class TorchTransformerModel(torch.nn.Module):
         x = self.positional_encoding(x)
 
         # Transformer processing
-        # x = self.transformer(x, mask=self.causal_mask, is_causal=True)
-        x = self.transformer(x)
+        x = self.transformer(x, mask=self.causal_mask, is_causal=True)
+        # x = self.transformer(x)
 
         # Take only the last timestep and output
         x = x[:, -1, :]  # Take last timestep

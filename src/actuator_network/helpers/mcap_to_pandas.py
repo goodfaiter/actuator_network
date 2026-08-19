@@ -28,15 +28,16 @@ def process_field(topic, field):
         }
     return None
 
-def read_mcap_to_dataframe(file_path: str) -> pd.DataFrame:
+def read_mcap_to_dataframe(file_path: str, topics: list = None) -> pd.DataFrame:
     """Read MCAP file to pandas DataFrame with maximum performance."""
-    topics = [
-        "/imu/data_raw",
-        "/weight_kg", 
-        "/desired_position_rad",
-        "/measured_position_rad",
-        "/measured_velocity_rad_per_sec",
-    ]
+    if topics is None:
+        topics = [
+            "/imu/data_raw",
+            "/weight_kg", 
+            "/desired_position_rad",
+            "/measured_position_rad",
+            "/measured_velocity_rad_per_sec",
+        ]
     
     msgs = read_ros2_messages(file_path, topics=topics)
     

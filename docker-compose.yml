@@ -8,7 +8,7 @@ services:
     command: tail -f /dev/null
     restart: unless-stopped
     environment:
-      - WANDB_API_KEY=0
+      - WANDB_API_KEY=eec35c2a3ec81aeed2deaeb37585e1d2ab561f5f
   dev_gpu:
     build:
       dockerfile: ./DockerfileGpu
@@ -24,4 +24,8 @@ services:
       - ./:/workspace
     command: tail -f /dev/null
     environment:
-      - WANDB_API_KEY=0
+      - WANDB_API_KEY=eec35c2a3ec81aeed2deaeb37585e1d2ab561f5f
+      - XDG_DATA_HOME=/workspace/.opencode/share
+      - XDG_STATE_HOME=/workspace/.opencode/state
+      - XDG_CONFIG_HOME=/workspace/.opencode/config
+      - XDG_CACHE_HOME=/workspace/.opencode/cache

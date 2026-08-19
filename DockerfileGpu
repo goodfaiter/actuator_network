@@ -35,6 +35,9 @@ RUN apt-get update && apt-get install -y \
     python3-argcomplete \
     && rm -rf /var/lib/apt/lists/*
 
+# Install opencode
+RUN curl -fsSL https://opencode.ai/install | bash
+
 # Setup environment
 RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
 
