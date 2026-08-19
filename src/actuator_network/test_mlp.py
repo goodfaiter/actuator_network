@@ -43,7 +43,7 @@ def main():
             )
 
         # Save the dataframe with predictions
-        data_df_to_mcap(data_df_extrapolated, mcap_file_path.replace(".mcap", "_predicted"))
+        data_df_to_mcap(data_df_extrapolated, mcap_file_path.replace(".mcap", "_predicted.mcap"))
 
 
 if __name__ == "__main__":

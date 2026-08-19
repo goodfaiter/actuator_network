@@ -25,6 +25,15 @@ def process_field(topic, field):
             # Orientation
             f"{topic}_data": field.data,
         }
+    if field._type == "geometry_msgs/WrenchStamped":
+        return {
+            f"{topic}_force_x": field.wrench.force.x,
+            f"{topic}_force_y": field.wrench.force.y,
+            f"{topic}_force_z": field.wrench.force.z,
+            f"{topic}_torque_x": field.wrench.torque.x,
+            f"{topic}_torque_y": field.wrench.torque.y,
+            f"{topic}_torque_z": field.wrench.torque.z,
+        }
     return None
 
 
@@ -37,6 +46,7 @@ def read_mcap_to_dataframe(file_path: str, topics: list = None) -> pd.DataFrame:
             "/desired_position_rad",
             "/measured_position_rad",
             "/measured_velocity_rad_per_sec",
+            "/bota/wrench_N_and_Nm",
         ]
 
     msgs = read_ros2_messages(file_path, topics=topics)

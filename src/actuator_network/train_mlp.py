@@ -61,7 +61,7 @@ def main():
         data_df = read_mcap_to_dataframe(mcap_file_path)
         data_df_extrapolated = extrapolate_dataframe(data_df, freq=freq)
         process_dataframe(data_df_extrapolated)
-        data_df_to_mcap(data_df_extrapolated, mcap_file_path.replace(".mcap", "_processed"))
+        data_df_to_mcap(data_df_extrapolated, mcap_file_path.replace(".mcap", "_processed.mcap"))
         col_names, data_tensor = pandas_to_torch(data_df_extrapolated, device=device)
         input_indices = [col_names.index(col) for col in input_cols]
         output_indices = [col_names.index(col) for col in output_cols]

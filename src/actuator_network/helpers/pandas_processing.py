@@ -41,7 +41,7 @@ def process_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """Calculate the tendon force from weight and acceleration"""
     mass = 0.03  # kg
     g = 9.81  # m/s^2
-    radius = 0.010  # m
+    radius = 0.011  # m
 
     df["delta_position_rad_data"] = df["desired_position_rad_data"] - df["measured_position_rad_data"]
 
@@ -79,5 +79,9 @@ def process_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
     df["tendon_force_newton_data"] = df["load_newton_data"] + df["calculated_dynamic_force_newton_data"]
 
+    df["tendon_bota_force_newton_data"] = df["bota_wrench_N_and_Nm_torque_z"] / radius
+
     # reindex with new col
     df = df.reindex(columns=[*df.columns.tolist()])
+
+    return df
