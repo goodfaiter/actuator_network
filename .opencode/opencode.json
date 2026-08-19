@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "moonshotai/Kimi-K2.7-Code",
+  "instructions": [".opencode/AGENTS.md"],
+  "provider": {
+    "EPFL-RCP": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "EPFL RCP AIAAS",
+      "options": {
+        "baseURL": "https://inference.rcp.epfl.ch/v1"
+      },
+      "models": {
+        "moonshotai/Kimi-K2.7-Code": {
+          "name": "Kimi K2.7 Code"
+        }
+      }
+    }
+  }
+}
