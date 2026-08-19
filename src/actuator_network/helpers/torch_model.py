@@ -20,31 +20,31 @@ class TorchMlpModel(torch.nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.network(x)
 
-    def deploy_forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.network(x)
-
 
 class TorchRNNModel(torch.nn.Module):
-    """RNN Model with PyTorch"""
+    """GRU-based RNN model with PyTorch"""
 
-    def __init__(self, input_size: int, hidden_size: int, num_layers: int, output_size: int, device: torch.device):
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        num_layers: int,
+        output_size: int,
+        device: torch.device,
+        dropout: float = 0.1,
+    ):
         super(TorchRNNModel, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
 
-        self.rnn = torch.nn.RNN(input_size, hidden_size, num_layers, batch_first=True, device=device)
+        self.rnn = torch.nn.GRU(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout, device=device)
         self.fc = torch.nn.Linear(in_features=hidden_size, out_features=output_size, device=device)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size, device=x.device)
-        out, _ = self.rnn(x, h0)
-        out = self.fc(out[:, -1, :])
-        return out.unsqueeze(1)  # Unsqueeze to keep consistent output shape
-
-    def deploy_forward(self, x: torch.Tensor, h0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor, h0: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+        if h0 is None:
+            h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size, device=x.device)
         out, hn = self.rnn(x, h0)
-        out = self.fc(out[:, -1, :])
-
+        out = self.fc(out)
         return out, hn
 
 
@@ -117,9 +117,6 @@ class TorchTransformerModel(torch.nn.Module):
         output = self.output_sequence(x)
 
         return output.unsqueeze(1)  # Unsqueeze to keep consistent output shape
-
-    def deploy_forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.forward(x)
 
 
 class PositionalEncoding(torch.nn.Module):

@@ -86,6 +86,8 @@ def train(model, inputs, outputs, model_saver: ModelSaver = None):
         for batch_inputs, batch_outputs in data_generator_train:
             optimizer.zero_grad()
             predictions = model(batch_inputs)
+            if isinstance(predictions, tuple):
+                predictions = predictions[0]
             loss = criterion(predictions, batch_outputs)
             loss.backward()
             optimizer.step()
@@ -99,6 +101,8 @@ def train(model, inputs, outputs, model_saver: ModelSaver = None):
         model.eval()
         with torch.no_grad():
             val_predictions = model(inputs_val)
+            if isinstance(val_predictions, tuple):
+                val_predictions = val_predictions[0]
             val_loss = criterion(val_predictions, outputs_val)
 
         # Log metrics
@@ -120,4 +124,131 @@ def train(model, inputs, outputs, model_saver: ModelSaver = None):
     model_saver.save_model("_final")
     model_saver.save_latest("final_")
     # Clean up wandb
+    wandb.finish()
+
+
+def train_stateful(
+    model: torch.nn.Module,
+    train_inputs: torch.Tensor,
+    train_targets: torch.Tensor,
+    val_inputs: torch.Tensor,
+    val_targets: torch.Tensor,
+    model_saver: ModelSaver,
+    num_epochs: int = 50,
+    learning_rate: float = 0.001,
+    chunk_batch_size: int = 4,
+    max_grad_norm: float = 1.0,
+):
+    """Train a recurrent model statefully with truncated backpropagation through time.
+
+    Chunks are processed in consecutive batches. Gradients flow through all chunks
+    within a batch; the hidden state is detached between batches to truncate gradients.
+
+    Args:
+        model: PyTorch RNN model whose `forward(chunk, h0)` returns `(pred, hn)`.
+        train_inputs: Training input chunks of shape (num_chunks, seq_length, input_dim).
+        train_targets: Training targets of shape (num_chunks, seq_length, output_dim).
+        val_inputs: Validation input chunks.
+        val_targets: Validation targets.
+        model_saver: ModelSaver instance for checkpointing.
+        num_epochs: Number of training epochs.
+        learning_rate: Optimizer learning rate.
+        chunk_batch_size: Number of consecutive chunks to process before a backward pass.
+        max_grad_norm: Maximum gradient norm for clipping.
+    """
+    wandb.config.update(
+        {
+            "learning_rate": learning_rate,
+            "num_epochs": num_epochs,
+            "chunk_batch_size": chunk_batch_size,
+            "max_grad_norm": max_grad_norm,
+        }
+    )
+    wandb.log({"Model": str(model)})
+
+    criterion = torch.nn.MSELoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    best_val_loss = float("inf")
+
+    def _process_chunk(model, chunk, target, h0):
+        if h0 is None:
+            h0 = torch.zeros(model.num_layers, 1, model.hidden_size, device=chunk.device)
+        pred, hn = model.forward(chunk, h0)
+        loss = criterion(pred, target)
+        return loss, hn
+
+    for epoch in range(num_epochs):
+        # Training phase
+        model.train()
+        epoch_loss = 0.0
+        num_batches = 0
+        h0 = None
+
+        num_train_chunks = train_inputs.shape[0]
+        for start in range(0, num_train_chunks, chunk_batch_size):
+            end = min(start + chunk_batch_size, num_train_chunks)
+
+            optimizer.zero_grad()
+            batch_loss = 0.0
+
+            for k in range(start, end):
+                chunk = train_inputs[k : k + 1]
+                target = train_targets[k : k + 1]
+
+                loss, h0 = _process_chunk(model, chunk, target, h0)
+                batch_loss += loss
+
+            batch_loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
+            optimizer.step()
+
+            # Truncated BPTT: detach hidden state between chunk batches
+            h0 = h0.detach()
+
+            epoch_loss += batch_loss.item()
+            num_batches += 1
+
+        avg_train_loss = epoch_loss / max(num_batches, 1)
+
+        # Validation phase: also carry hidden state to match inference
+        model.eval()
+        val_loss = 0.0
+        num_val_batches = 0
+        h0 = None
+        with torch.no_grad():
+            num_val_chunks = val_inputs.shape[0]
+            for start in range(0, num_val_chunks, chunk_batch_size):
+                end = min(start + chunk_batch_size, num_val_chunks)
+
+                batch_loss = 0.0
+                for k in range(start, end):
+                    chunk = val_inputs[k : k + 1]
+                    target = val_targets[k : k + 1]
+
+                    loss, h0 = _process_chunk(model, chunk, target, h0)
+                    batch_loss += loss
+
+                h0 = h0.detach()
+
+                val_loss += batch_loss.item()
+                num_val_batches += 1
+
+        avg_val_loss = val_loss / max(num_val_batches, 1)
+
+        print(f"Epoch [{epoch + 1}/{num_epochs}], Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
+        wandb.log({"train_loss": avg_train_loss, "val_loss": avg_val_loss, "epoch": epoch + 1})
+
+        # Save every 100 epochs
+        if (epoch + 1) % 100 == 0:
+            model_saver.save_model(f"_epoch_{epoch + 1}")
+
+        # Save best model
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            model_saver.save_model("_best")
+            model_saver.save_latest("best_")
+            print(f"New best model! Val loss: {best_val_loss:.4f}")
+
+    model_saver.save_model("_final")
+    model_saver.save_latest("final_")
     wandb.finish()

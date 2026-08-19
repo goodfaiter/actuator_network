@@ -58,9 +58,9 @@ class ScaledModelWrapper(nn.Module):
         x = (x - self.input_mean) / self.input_std
 
         if hasattr(self, "h0"):
-            x, self.h0 = self.model.deploy_forward(x, self.h0)
+            x, self.h0 = self.model.forward(x, self.h0)
         else:
-            x = self.model.deploy_forward(x)
+            x = self.model.forward(x)
 
         x = x * self.output_std + self.output_mean
 
