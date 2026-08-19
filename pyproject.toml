@@ -33,7 +33,9 @@ dev = [
 train-mlp = "actuator_network.train_mlp:main"
 train-rnn = "actuator_network.train_rnn:main"
 train-transformer = "actuator_network.train_transformer:main"
-predict = "actuator_network.test:main"
+test-mlp = "actuator_network.test_mlp:main"
+test-rnn = "actuator_network.test_rnn:main"
+test-transformer = "actuator_network.test_transformer:main"
 
 [project.urls]
 repository = "https://github.com/goodfaiter/actuator_network"
