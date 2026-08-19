@@ -19,10 +19,12 @@ The trained model is wrapped in `ScaledModelWrapper`, which includes input/outpu
 ```
 /workspace
 ├── README.md                           # Human-facing project overview
-├── pyproject.toml                      # Package metadata (name, version, python>=3.10)
-├── docker-compose.yml                  # dev_cpu / dev_gpu services
-├── DockerfileCpu                       # CPU-only container (Ubuntu 22.04, ROS2 Humble)
-├── DockerfileGpu                       # GPU container (CUDA 12.8, ROS2 Humble)
+├── pyproject.toml                      # Package metadata + uv config
+├── uv.lock                             # Locked dependency tree
+├── .env.example                        # WANDB_API_KEY template
+├── entrypoint.sh                       # Docker entrypoint: uv sync + exec
+├── docker-compose.yml                  # dev service with GPU reservation
+├── Dockerfile                          # GPU container (CUDA 12.8, ROS2 Humble, uv, opencode)
 ├── src/actuator_network/               # Main package
 │   ├── __init__.py
 │   ├── train_mlp.py                    # Entry point: train MLP
@@ -52,29 +54,53 @@ The trained model is wrapped in `ScaledModelWrapper`, which includes input/outpu
 
 ## Environment and dependencies
 
-The project is meant to run inside Docker:
+The project uses [uv](https://docs.astral.sh/uv/) for dependency management. The lockfile targets the CUDA 12.8 build of PyTorch.
+
+### Local uv workflow
 
 ```bash
-# CPU container
-docker compose up -d dev_cpu
-docker exec -it actuator_network_cpu bash
+# Sync dependencies and install the package in editable mode
+uv sync
+uv pip install -e . --link-mode=copy
 
-# GPU container
-docker compose up -d dev_gpu
-docker exec -it actuator_network_gpu bash
+# Run commands
+uv run train-transformer
+uv run predict
 ```
 
-Both containers install:
+### Console scripts
 
-- ROS2 Humble (base)
-- PyTorch (CPU or CUDA 12.8)
-- Python packages: `numpy rosbags pybind11 pandas scikit-learn matplotlib tqdm roma PyQt6 pyarrow mcap mcap-ros2-support wandb`
+`pyproject.toml` exposes these scripts:
 
-Inside the container the workspace is mounted at `/workspace`.
+- `train-mlp`
+- `train-rnn`
+- `train-transformer`
+- `predict`
 
-### Environment variables
+Run them with `uv run <script>`.
 
-`docker-compose.yml` currently passes `WANDB_API_KEY` inline. **Do not commit new secrets to version control.** Prefer an `.env` file and `${WANDB_API_KEY}` interpolation in `docker-compose.yml`, and rotate any key that was previously committed.
+### Docker workflow (optional)
+
+A fully provisioned GPU environment is available via Docker:
+
+```bash
+docker compose up -d dev
+docker exec -it actuator_network bash
+```
+
+The container entrypoint (`entrypoint.sh`) runs `uv sync` and `uv pip install -e .` automatically, then execs the container command.
+
+### Weights & Biases
+
+Training logs to W&B. The key is loaded from `.env` for Docker and can be exported locally:
+
+```bash
+cp .env.example .env
+# edit .env
+export WANDB_API_KEY=your_key_here
+```
+
+**Never commit the `.env` file or any API key.** It is already gitignored.
 
 ## Typical workflow
 
@@ -90,11 +116,8 @@ Place ROS2 MCAP files under `data/training_data/<date>/`. The expected logged to
 
 ### 2. Train a model
 
-Run one of the training entry points from inside the container:
-
 ```bash
-cd /workspace/src/actuator_network
-python train_transformer.py
+uv run train-transformer
 ```
 
 Each training script:
@@ -119,8 +142,7 @@ Key configuration knobs in the training scripts:
 ### 3. Run inference
 
 ```bash
-cd /workspace/src/actuator_network
-python test.py
+uv run predict
 ```
 
 `test.py` loads `data/output_data/final_latest.pt` (TorchScript), inspects its stored metadata (frequency, history size, stride, model type, input/output columns), builds the matching input tensor, runs the model, and writes a `_predicted.mcap` with the new `*_predicted` columns.
@@ -130,50 +152,53 @@ python test.py
 Plot scripts are self-contained Matplotlib notebooks that read prediction MCAPs from hardcoded paths and save PNGs to `src/actuator_network/plots/figures/`. Run individually, e.g.:
 
 ```bash
-cd /workspace/src/actuator_network/plots
-python plot_rmse.py
+cd src/actuator_network/plots
+uv run python plot_rmse.py
 ```
 
 ## Code conventions
 
-- Use absolute paths under `/workspace` in experiment scripts; data lives in `data/`.
+- Use absolute paths under `/workspace` (or the repo root) in experiment scripts; data lives in `data/`.
+- Always import from the package namespace: `from actuator_network.helpers...`.
 - Keep model definitions in `helpers/torch_model.py`; do not add training logic there.
 - Keep data I/O in `helpers/mcap_to_pandas.py` and `helpers/pandas_to_mcap.py`.
 - Use `ScaledModelWrapper` as the deployment-facing model; it stores normalization statistics and model metadata as buffers so they are embedded in the TorchScript export.
 - Prefer `torch.jit.script` over `trace` for the wrapper because it handles control flow and RNN state.
-- Do not commit `.pt`, `.pth`, MCAP files, `__pycache__`, or `wandb/` runs (they are already gitignored).
+- Do not commit `.pt`, `.pth`, MCAP files, `__pycache__`, `.env`, `.venv`, or `wandb/` runs (they are already gitignored).
+- Run `uv run ruff check src` and `uv run ruff format src` before finishing non-trivial changes.
 
 ## Known issues and gotchas
 
-1. **Function signature mismatch.** `train_mlp.py` and `train_rnn.py` call `process_dataframe(data_df_extrapolated, spring_constant=spring_constant)`, but `helpers/pandas_processing.py::process_dataframe` only accepts `df`. This will raise a `TypeError` until the signature is reconciled.
+1. **Training scripts are hardcoded experiment notebooks.** Paths, model configs, and input/output columns are defined inside `train_mlp.py`, `train_rnn.py`, and `train_transformer.py`. They work as `uv run train-*` entry points but are not a generic CLI yet.
 
-2. **Type mismatch in `train_transformer.py`.** Its `mcap_file_paths` is a plain list of strings, while the other training scripts use a list of `(path, spring_constant)` tuples. The loop in `train_transformer.py` already iterates directly over strings, so it works, but the three training scripts are inconsistent.
+2. **`process_inputs_time_series` zero-padding.** When the sequence start is before index `0`, the remaining entries are left as zeros. Make sure this behavior is intentional for your windowing strategy.
 
-3. **Hardcoded W&B API key.** `docker-compose.yml` contains an inline `WANDB_API_KEY`. Move it to an `.env` file and rotate the key.
+3. **RNN hidden state.** `ScaledModelWrapper` registers `h0` only when the wrapped model has an `rnn` attribute. For deployment, call `model.reset()` to clear state between sequences.
 
-4. **No tests or CI.** There is no test suite, linting, or formatting configuration yet. Agents adding non-trivial logic should add small sanity checks (e.g. shape tests for `process_inputs_time_series`).
+4. **Plot scripts are hardcoded to specific experimental files.** They will fail on a fresh checkout without the matching `data/` contents. They are intended for reproducing paper figures, not as a generic plotting CLI.
 
-5. **Plot scripts are hardcoded to specific experimental files.** They will fail on a fresh checkout without the matching `data/` contents. They are intended for reproducing paper figures, not as a generic plotting CLI.
-
-6. **`process_inputs_time_series` zero-padding.** When the sequence start is before index `0`, the remaining entries are left as zeros. Make sure this behavior is intentional for your windowing strategy.
-
-7. **RNN hidden state.** `ScaledModelWrapper` registers `h0` only when the wrapped model has an `rnn` attribute. For deployment, call `model.reset()` to clear state between sequences.
+5. **No tests or CI.** There is no test suite or CI yet. Agents adding non-trivial logic should add small sanity checks (e.g. shape tests for `process_inputs_time_series`) and run `uv run pytest`.
 
 ## Useful commands
 
 ```bash
-# Inside the container
-cd /workspace/src/actuator_network
+# Sync / install
+uv sync
+uv pip install -e . --link-mode=copy
 
 # Train
-python train_mlp.py
-python train_rnn.py
-python train_transformer.py
+uv run train-mlp
+uv run train-rnn
+uv run train-transformer
 
 # Inference
-python test.py
+uv run predict
 
 # Plots
-cd /workspace/src/actuator_network/plots
-python plot_rmse.py
+cd src/actuator_network/plots
+uv run python plot_rmse.py
+
+# Lint / format
+uv run ruff check src
+uv run ruff format src
 ```

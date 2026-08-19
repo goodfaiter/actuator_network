@@ -1,18 +1,8 @@
 services:
-  dev_cpu:
-    build: 
-      dockerfile: ./DockerfileCpu
-    container_name: actuator_network_cpu
-    volumes:
-      - ./:/workspace
-    command: tail -f /dev/null
-    restart: unless-stopped
-    environment:
-      - WANDB_API_KEY=eec35c2a3ec81aeed2deaeb37585e1d2ab561f5f
-  dev_gpu:
+  dev:
     build:
-      dockerfile: ./DockerfileGpu
-    container_name: actuator_network_gpu
+      dockerfile: ./Dockerfile
+    container_name: actuator_network
     deploy:
       resources:
         reservations:
@@ -23,8 +13,9 @@ services:
     volumes:
       - ./:/workspace
     command: tail -f /dev/null
+    restart: unless-stopped
     environment:
-      - WANDB_API_KEY=eec35c2a3ec81aeed2deaeb37585e1d2ab561f5f
+      - WANDB_API_KEY=${WANDB_API_KEY}
       - XDG_DATA_HOME=/workspace/.opencode/share
       - XDG_STATE_HOME=/workspace/.opencode/state
       - XDG_CONFIG_HOME=/workspace/.opencode/config

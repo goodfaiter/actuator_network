@@ -1,14 +1,19 @@
-from actuator_network.helpers.mcap_to_pandas import read_mcap_to_dataframe
 import matplotlib.pyplot as plt
 import numpy as np
-from typing import Dict, List, Optional
+
+from actuator_network.helpers.mcap_to_pandas import read_mcap_to_dataframe
 
 LINEWIDTH = 2  # 1 standard, 3 for overleaf
 LABELS_FONT = 13  # 14 stadard, 30 for overleaf
 # plt.rcParams['font.family'] = 'Times New Roman'
 plt.rcParams["font.size"] = LABELS_FONT
 
-topics = ["/desired_position_rad_data", "/measured_position_rad_data", "/load_newton_data", "/load_newton_data_predicted"]
+topics = [
+    "/desired_position_rad_data",
+    "/measured_position_rad_data",
+    "/load_newton_data",
+    "/load_newton_data_predicted",
+]
 
 df_unblocked = read_mcap_to_dataframe(
     "/workspace/data/training_data/2026_03_03/rosbag2_2026_03_03-15_35_25_0_predicted/rosbag2_2026_03_03-15_35_25_0_predicted_0.mcap",
@@ -31,7 +36,7 @@ df_blocked = read_mcap_to_dataframe(
 df_blocked = df_blocked.groupby(df_blocked.index).first()
 df_blocked = df_blocked[2 * 80 : 17 * 80]
 
-# df = df + read_mcap_to_dataframe("/workspace/data/training_data/2026_03_03/rosbag2_2026_03_03-13_44_47_0_predicted/rosbag2_2026_03_03-13_44_47_0_predicted_0.mcap", topics=topics)
+# df = df + read_mcap_to_dataframe("/workspace/data/training_data/2026_03_03/rosbag2_2026_03_03-13_44_47_0_predicted/rosbag2_2026_03_03-13_44_47_0_predicted_0.mcap", topics=topics)  # noqa: E501
 # df = df.groupby(df.index).first()
 # df = df[150:2560]
 
@@ -74,4 +79,6 @@ for i, df in enumerate(dfs):
         ax2.set_xlabel("Time [s]")
 
     plt.tight_layout()
-    plt.savefig(f"/workspace/src/actuator_network/plots/figures/contact_ramp_tracking_{i}.png", dpi=500, bbox_inches="tight")
+    plt.savefig(
+        f"/workspace/src/actuator_network/plots/figures/contact_ramp_tracking_{i}.png", dpi=500, bbox_inches="tight"
+    )

@@ -5,10 +5,10 @@ def extrapolate_dataframe(df: pd.DataFrame, freq: int) -> pd.DataFrame:
     """Resample dataframe to fixed frequency with proper interpolation"""
 
     # Create target index at desired frequency
-    target_period = f"{1000//freq}ms"
+    target_period = f"{1000 // freq}ms"
 
     # First, upsample to a higher frequency for smoother interpolation
-    higher_freq = f"{1000//(freq*2)}ms"  # Double the frequency for upsampling
+    higher_freq = f"{1000 // (freq * 2)}ms"  # Double the frequency for upsampling
     df_upsampled = df.resample(higher_freq).mean()
 
     # Interpolate with method appropriate for your data
@@ -39,7 +39,6 @@ def derivate_signal(signal: pd.Series, dt: float) -> pd.Series:
 
 def process_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """Calculate the tendon force from weight and acceleration"""
-    num_samples_for_offset = 40  # 0.5 seconds at 80Hz
     mass = 0.03  # kg
     g = 9.81  # m/s^2
     radius = 0.010  # m
@@ -49,7 +48,9 @@ def process_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df["calculated_velocity_meter_per_sec_data"] = df["measured_velocity_rad_per_sec_data"] * radius
 
     # Acceleration of motor
-    df["calculated_acceleration_meter_per_sec2_data"] = derivate_signal(df["measured_velocity_rad_per_sec_data"], dt=1 / 80) * radius
+    df["calculated_acceleration_meter_per_sec2_data"] = (
+        derivate_signal(df["measured_velocity_rad_per_sec_data"], dt=1 / 80) * radius
+    )
     df["calculated_dynamic_force_newton_data"] = df["calculated_acceleration_meter_per_sec2_data"] * mass
 
     # weight_offset = df["weight_kg_data"][:num_samples_for_offset].mean()

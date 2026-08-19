@@ -1,5 +1,6 @@
-import torch
 import math
+
+import torch
 
 
 class TorchMlpModel(torch.nn.Module):
@@ -49,7 +50,14 @@ class TorchRNNModel(torch.nn.Module):
 
 class TorchTransformerModel(torch.nn.Module):
     def __init__(
-        self, input_size: int, output_size: int, num_layers: int, history_size: int, num_heads: int, hidden_dim: int, device: torch.device
+        self,
+        input_size: int,
+        output_size: int,
+        num_layers: int,
+        history_size: int,
+        num_heads: int,
+        hidden_dim: int,
+        device: torch.device,
     ):
         super(TorchTransformerModel, self).__init__()
 

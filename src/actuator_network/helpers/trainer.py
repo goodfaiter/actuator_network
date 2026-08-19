@@ -1,6 +1,7 @@
 import torch
+
 import wandb
-from helpers.wrapper import ScaledModelWrapper, ModelSaver
+from actuator_network.helpers.wrapper import ModelSaver
 
 
 def split_data(inputs, outputs, train_ratio=0.9):
@@ -60,7 +61,9 @@ def train(model, inputs, outputs, model_saver: ModelSaver = None):
     train_ratio = 0.9
 
     wandb.init(project="actuator_network")
-    wandb.config.update({"learning_rate": learning_rate, "batch_size": batch_size, "num_epochs": num_epochs, "train_ratio": train_ratio})
+    wandb.config.update(
+        {"learning_rate": learning_rate, "batch_size": batch_size, "num_epochs": num_epochs, "train_ratio": train_ratio}
+    )
     wandb.log({"Model": str(model)})
     # wandb.watch(model, log="all", log_freq=100)
 
@@ -99,7 +102,7 @@ def train(model, inputs, outputs, model_saver: ModelSaver = None):
             val_loss = criterion(val_predictions, outputs_val)
 
         # Log metrics
-        print(f"Epoch [{epoch + 1}/{num_epochs}], " f"Train Loss: {avg_train_loss:.4f}, Val Loss: {val_loss.item():.4f}")
+        print(f"Epoch [{epoch + 1}/{num_epochs}], Train Loss: {avg_train_loss:.4f}, Val Loss: {val_loss.item():.4f}")
 
         wandb.log({"train_loss": avg_train_loss, "val_loss": val_loss.item(), "epoch": epoch + 1})
 

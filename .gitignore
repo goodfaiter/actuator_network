@@ -9,3 +9,6 @@ tools
 wandb/
 pres_video
 # .opencode
+.env
+.venv/
+.ruff_cache/

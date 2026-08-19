@@ -14,45 +14,60 @@ Three model architectures are supported:
 
 ## Quick start
 
-The recommended environment is Docker:
+This project uses [uv](https://docs.astral.sh/uv/) for dependency management.
 
 ```bash
-# CPU
-docker compose up -d dev_cpu
-docker exec -it actuator_network_cpu bash
+# 1. Install uv (if you don't have it)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# GPU
-docker compose up -d dev_gpu
-docker exec -it actuator_network_gpu bash
+# 2. Sync the lockfile and install the package in editable mode
+uv sync
+uv pip install -e . --link-mode=copy
+
+# 3. Run a training script
+uv run train-transformer
 ```
 
-Inside the container, the repo is mounted at `/workspace`.
+The lockfile now targets the CUDA 12.8 build of PyTorch.
 
-### Train a model
+### Available commands
+
+After syncing, the following console scripts are available via `uv run`:
 
 ```bash
-cd /workspace/src/actuator_network
-python train_transformer.py   # or train_mlp.py / train_rnn.py
+uv run train-mlp
+uv run train-rnn
+uv run train-transformer
+uv run predict
 ```
 
-Training reads hardcoded MCAP paths under `data/training_data/`, resamples them to 80 Hz, derives velocity/acceleration/load columns, builds history windows, normalizes, and trains with Weights & Biases logging. Checkpoints are saved to `data/output_data/`.
+The training scripts still contain hardcoded MCAP paths and hyperparameters, so treat them as experiment entry points rather than a generic CLI.
 
-### Run inference
+### Weights & Biases
+
+Training logs to W&B. Copy the example environment file and add your key:
 
 ```bash
-python test.py
+cp .env.example .env
+# edit .env with your WANDB_API_KEY
 ```
 
-`test.py` loads `data/output_data/final_latest.pt`, inspects its embedded metadata, and writes a `_predicted.mcap` with the new `*_predicted` columns.
-
-### Generate plots
+`docker compose` will pick it up automatically. For local `uv run`, export it:
 
 ```bash
-cd /workspace/src/actuator_network/plots
-python plot_rmse.py
+export WANDB_API_KEY=your_key_here
 ```
 
-Plot scripts are tailored to specific paper figures and assume the corresponding prediction MCAPs already exist.
+### Docker (optional)
+
+A Docker setup is provided for a fully provisioned GPU environment (Ubuntu 22.04 + CUDA 12.8 + cuDNN + ROS2 Humble + uv + opencode).
+
+```bash
+docker compose up -d dev
+docker exec -it actuator_network bash
+```
+
+The container entrypoint runs `uv sync` and `uv pip install -e .` automatically, so the package is ready to use.
 
 ## Repository layout
 
@@ -71,10 +86,13 @@ src/actuator_network/
 └── plots/                   # Matplotlib figure scripts
 ```
 
-## Configuration notes
+## Development
 
-- Training scripts contain hardcoded MCAP paths, model hyperparameters, and input/output column lists. Treat them as experiment notebooks rather than a generic CLI.
-- `docker-compose.yml` currently contains an inline W&B API key. Move it to an `.env` file and rotate the key before sharing the project.
+```bash
+# Run linting / formatting
+uv run ruff check src
+uv run ruff format src
+```
 
 ## License
 

@@ -10,8 +10,14 @@ def normalize_tensor(tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, 
     """
     mean = torch.zeros(1, tensor.shape[-1], device=tensor.device, requires_grad=False)
     std = torch.ones(1, tensor.shape[-1], device=tensor.device, requires_grad=False)
-    mean[:] = torch.mean(tensor, dim=[i for i in range(tensor.dim() - 1)], keepdim=True,)
-    std[:] = torch.std(tensor, dim=[i for i in range(tensor.dim() - 1)], keepdim=True) + 1e-8  # Add small value to avoid division by zero
+    mean[:] = torch.mean(
+        tensor,
+        dim=[i for i in range(tensor.dim() - 1)],
+        keepdim=True,
+    )
+    std[:] = (
+        torch.std(tensor, dim=[i for i in range(tensor.dim() - 1)], keepdim=True) + 1e-8
+    )  # Add small value to avoid division by zero
     with torch.no_grad():
         normalized_tensor = (tensor - mean) / std
 
@@ -35,7 +41,7 @@ def process_inputs(data: torch.Tensor, stride: int, num_hist: int, prediction: b
             break
         one_step = torch.zeros((num_hist * feature_dim), device=data.device)
         for j in range(num_hist):
-            one_step[j * feature_dim:(j + 1) * feature_dim] = data[i + j * stride]
+            one_step[j * feature_dim : (j + 1) * feature_dim] = data[i + j * stride]
         history_vector.append(one_step)
 
     hist_tensor = torch.stack(history_vector)
@@ -43,7 +49,7 @@ def process_inputs(data: torch.Tensor, stride: int, num_hist: int, prediction: b
     return hist_tensor.to(data.device)
 
 
-def process_inputs_time_series(data: torch.Tensor, history_size: int, stride:int, prediction: bool) -> torch.Tensor:
+def process_inputs_time_series(data: torch.Tensor, history_size: int, stride: int, prediction: bool) -> torch.Tensor:
     """Turn inputs into sequences short sequences of timesries
     Args:
         data (torch.Tensor): Input tensor of shape (batch_size, feature_dim)
@@ -84,7 +90,9 @@ def process_outputs(data: torch.Tensor, stride: int, num_hist: int, prediction: 
         if i + (num_hist + (0 if prediction else -1)) * stride >= batch_size:
             break
         one_step = torch.zeros((feature_dim), device=data.device)
-        one_step[:] = data[i + (num_hist + (0 if prediction else -1)) * stride]  # + since we're predicting the next step after history
+        one_step[:] = data[
+            i + (num_hist + (0 if prediction else -1)) * stride
+        ]  # + since we're predicting the next step after history
         history_vector.append(one_step)
 
     hist_tensor = torch.stack(history_vector)

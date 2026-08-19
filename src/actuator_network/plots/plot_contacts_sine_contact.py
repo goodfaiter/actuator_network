@@ -1,21 +1,26 @@
-from actuator_network.helpers.mcap_to_pandas import read_mcap_to_dataframe
 import matplotlib.pyplot as plt
 import numpy as np
-from typing import Dict, List, Optional
+
+from actuator_network.helpers.mcap_to_pandas import read_mcap_to_dataframe
 
 LINEWIDTH = 2  # 1 standard, 3 for overleaf
 LABELS_FONT = 13  # 14 stadard, 30 for overleaf
 # plt.rcParams['font.family'] = 'Times New Roman'
 plt.rcParams["font.size"] = LABELS_FONT
 
-topics = ["/desired_position_rad_data", "/measured_position_rad_data", "/load_newton_data", "/load_newton_data_predicted"]
+topics = [
+    "/desired_position_rad_data",
+    "/measured_position_rad_data",
+    "/load_newton_data",
+    "/load_newton_data_predicted",
+]
 
 df = read_mcap_to_dataframe(
     "/workspace/data/training_data/2026_03_03/rosbag2_2026_03_03-17_05_48_0_predicted/rosbag2_2026_03_03-17_05_48_0_predicted_0.mcap",
     topics=topics,
 )
 df = df.groupby(df.index).first()
-df = df[5*80: 13*80]
+df = df[5 * 80 : 13 * 80]
 # df = df[0 : -1]
 
 time = [i * 0.0125 for i in range(len(df))]  # 0.0125 is the extrapolated frequency (80Hz)
@@ -51,4 +56,6 @@ rmse_measured = np.sqrt(np.mean((df["load_newton_data_data"] - df["load_newton_d
 print(f"RMSE Measured vs Predicted: {rmse_measured:.2f} N")
 
 plt.tight_layout()
-plt.savefig(f"/workspace/src/actuator_network/plots/figures/contact_ramp_tracking_sine.png", dpi=500, bbox_inches="tight")
+plt.savefig(
+    "/workspace/src/actuator_network/plots/figures/contact_ramp_tracking_sine.png", dpi=500, bbox_inches="tight"
+)
