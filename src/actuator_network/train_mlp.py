@@ -1,14 +1,7 @@
 import torch
 
-from actuator_network.helpers.mcap_to_pandas import read_mcap_to_dataframe
-from actuator_network.helpers.pandas_processing import extrapolate_dataframe, process_dataframe
-from actuator_network.helpers.pandas_to_mcap import data_df_to_mcap
-from actuator_network.helpers.pandas_to_torch import (
-    normalize_tensor,
-    pandas_to_torch,
-    process_inputs_time_series,
-    process_outputs_time_series,
-)
+from actuator_network.helpers.data_pipeline import load_mcap_files_parallel
+from actuator_network.helpers.pandas_to_torch import normalize_tensor
 from actuator_network.helpers.torch_model import TorchMlpModel
 from actuator_network.helpers.trainer import train
 from actuator_network.helpers.wrapper import ModelSaver, ScaledModelWrapper
@@ -27,24 +20,17 @@ def main():
         "/workspace/data/training_data/2026_08_19/rosbag2_2026_08_19-12_40_03_0.mcap",
     ]
 
-    all_inputs = torch.empty((0, num_hist, len(input_cols)), device=device)
-    all_outputs = torch.empty((0, 1, len(output_cols)), device=device)
-    for mcap_file_path in mcap_file_paths:
-        data_df = read_mcap_to_dataframe(mcap_file_path)
-        data_df_extrapolated = extrapolate_dataframe(data_df, freq=freq)
-        # Remove duplicate timestamps by keeping the first occurrence
-        data_df_extrapolated = data_df_extrapolated.groupby(data_df_extrapolated.index).first()
-        process_dataframe(data_df_extrapolated)
-        data_df_to_mcap(data_df_extrapolated, mcap_file_path.replace(".mcap", "_processed.mcap"))
-        col_names, data_tensor = pandas_to_torch(data_df_extrapolated, device=device)
-        input_indices = [col_names.index(col) for col in input_cols]
-        output_indices = [col_names.index(col) for col in output_cols]
-        inputs = process_inputs_time_series(
-            data_tensor[:, input_indices], history_size=num_hist, stride=stride, prediction=prediction
-        )
-        outputs = process_outputs_time_series(data_tensor[:, output_indices], stride=stride, history_size=num_hist)
-        all_inputs = torch.cat((all_inputs, inputs), dim=0)
-        all_outputs = torch.cat((all_outputs, outputs), dim=0)
+    all_inputs, all_outputs = load_mcap_files_parallel(
+        mcap_file_paths,
+        freq=freq,
+        input_cols=input_cols,
+        output_cols=output_cols,
+        history_size=num_hist,
+        stride=stride,
+        prediction=prediction,
+    )
+    all_inputs = all_inputs.to(device)
+    all_outputs = all_outputs.to(device)
 
     # Flatten windows for the MLP
     all_inputs = all_inputs.view(all_inputs.shape[0], -1)

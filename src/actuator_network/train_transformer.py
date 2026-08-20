@@ -1,14 +1,7 @@
 import torch
 
-from actuator_network.helpers.mcap_to_pandas import read_mcap_to_dataframe
-from actuator_network.helpers.pandas_processing import extrapolate_dataframe, process_dataframe
-from actuator_network.helpers.pandas_to_mcap import data_df_to_mcap
-from actuator_network.helpers.pandas_to_torch import (
-    normalize_tensor,
-    pandas_to_torch,
-    process_inputs_time_series,
-    process_outputs_time_series,
-)
+from actuator_network.helpers.data_pipeline import load_mcap_files_parallel
+from actuator_network.helpers.pandas_to_torch import normalize_tensor
 from actuator_network.helpers.torch_model import TorchTransformerModel
 from actuator_network.helpers.trainer import train
 from actuator_network.helpers.wrapper import ModelSaver, ScaledModelWrapper
@@ -16,36 +9,30 @@ from actuator_network.helpers.wrapper import ModelSaver, ScaledModelWrapper
 
 def main():
     # Configuration
-    data_freq = 80  # Desired frequency in Hz
-    stride = 4  # Stride between future steps (4 for 20Hz prediction from 80Hz data)
+    data_freq = 200  # Desired frequency in Hz
+    stride = 2  # Stride between future steps (2 for 100Hz prediction from 200Hz data)
     inference_freq = data_freq // stride  # Inference frequency in Hz
     prediction = False  # Whether we are doing prediction or estimation
-    history_size = 30
+    history_size = 150
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     input_cols = ["delta_position_rad_data", "measured_velocity_rad_per_sec_data"]
     output_cols = ["tendon_bota_force_newton_data"]
     mcap_file_paths = [
-        "/workspace/data/training_data/2026_08_19/rosbag2_2026_08_19-12_40_03_0.mcap",
+        "/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_03_30_0.mcap",  # finger, mixed 200Hz
+        "/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_52_16_0.mcap",  # finger, mixed 200Hz
     ]
 
-    all_inputs = torch.empty((0, history_size, len(input_cols)), device=device)
-    all_outputs = torch.empty((0, 1, len(output_cols)), device=device)
-    for mcap_file_path in mcap_file_paths:
-        data_df = read_mcap_to_dataframe(mcap_file_path)
-        data_df_extrapolated = extrapolate_dataframe(data_df, freq=data_freq)
-        # Remove duplicate timestamps by keeping the first occurrence
-        data_df_extrapolated = data_df_extrapolated.groupby(data_df_extrapolated.index).first()
-        process_dataframe(data_df_extrapolated)
-        data_df_to_mcap(data_df_extrapolated, mcap_file_path.replace(".mcap", "_processed.mcap"))
-        col_names, data_tensor = pandas_to_torch(data_df_extrapolated, device=device)
-        input_indices = [col_names.index(col) for col in input_cols]
-        output_indices = [col_names.index(col) for col in output_cols]
-        inputs = process_inputs_time_series(
-            data_tensor[:, input_indices], stride=stride, history_size=history_size, prediction=prediction
-        )
-        outputs = process_outputs_time_series(data_tensor[:, output_indices], stride=stride, history_size=history_size)
-        all_inputs = torch.cat((all_inputs, inputs), dim=0)
-        all_outputs = torch.cat((all_outputs, outputs), dim=0)
+    all_inputs, all_outputs = load_mcap_files_parallel(
+        mcap_file_paths,
+        freq=data_freq,
+        input_cols=input_cols,
+        output_cols=output_cols,
+        history_size=history_size,
+        stride=stride,
+        prediction=prediction,
+    )
+    all_inputs = all_inputs.to(device)
+    all_outputs = all_outputs.to(device)
 
     inputs_normalized, inputs_mean, inputs_std = normalize_tensor(all_inputs)
     outputs_normalized, outputs_mean, outputs_std = normalize_tensor(all_outputs)
