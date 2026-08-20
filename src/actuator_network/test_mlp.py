@@ -45,9 +45,10 @@ def main():
         predictions[:, :] = preds
         offset = (num_hist - 1) * stride
         for i, col in enumerate(output_cols):
-            data_df_extrapolated[col + "_predicted"].iloc[offset : offset + predictions.shape[0]] = predictions[
-                :, i
-            ].numpy()
+            data_df_extrapolated.loc[
+                data_df_extrapolated.index[offset : offset + predictions.shape[0]],
+                col + "_predicted",
+            ] = predictions[:, i].numpy()
 
         # Save the dataframe with predictions
         data_df_to_mcap(data_df_extrapolated, mcap_file_path.replace(".mcap", "_predicted.mcap"))

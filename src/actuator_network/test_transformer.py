@@ -8,7 +8,7 @@ from actuator_network.helpers.pandas_to_torch import pandas_to_torch, process_in
 
 def main():
     mcap_file_paths = [
-        "/workspace/data/training_data/2026_08_19/rosbag2_2026_08_19-12_40_03_0.mcap",
+        "/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_03_30_0.mcap"  # finger, mixed 200Hz
     ]
 
     file_path = "/workspace/data/output_data/best_latest.pt"
@@ -43,9 +43,10 @@ def main():
         predictions[:, :] = preds[:, 0, :]  # Take the first time step
         offset = (num_hist - 1) * stride
         for i, col in enumerate(output_cols):
-            data_df_extrapolated[col + "_predicted"].iloc[offset : offset + predictions.shape[0]] = predictions[
-                :, i
-            ].numpy()
+            data_df_extrapolated.loc[
+                data_df_extrapolated.index[offset : offset + predictions.shape[0]],
+                col + "_predicted",
+            ] = predictions[:, i].numpy()
 
         # Save the dataframe with predictions
         data_df_to_mcap(data_df_extrapolated, mcap_file_path.replace(".mcap", "_predicted.mcap"))
