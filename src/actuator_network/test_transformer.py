@@ -8,13 +8,14 @@ from actuator_network.helpers.pandas_to_torch import pandas_to_torch, process_in
 
 def main():
     mcap_file_paths = [
-        "/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_03_30_0.mcap"  # finger, mixed 200Hz
+        "/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_03_30_0.mcap",  # finger, mixed 200Hz
+        "/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_52_16_0.mcap",  # finger, mixed 200Hz
     ]
 
     file_path = "/workspace/data/output_data/best_latest.pt"
     model = torch.jit.load(file_path, map_location="cpu")
 
-    data_freq = 80
+    data_freq = 200
     stride = int(model.stride.item())
     num_hist = int(model.history_size.item())
     prediction = bool(model.prediction_mode.item())

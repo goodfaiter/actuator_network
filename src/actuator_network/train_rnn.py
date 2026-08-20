@@ -1,11 +1,8 @@
 import torch
 
 import wandb
-from actuator_network.helpers.mcap_to_pandas import read_mcap_to_dataframe
-from actuator_network.helpers.pandas_processing import extrapolate_dataframe, process_dataframe
-from actuator_network.helpers.pandas_to_mcap import data_df_to_mcap
-from actuator_network.helpers.pandas_to_torch import normalize_tensor, pandas_to_torch
-from actuator_network.helpers.rnn_pipeline import make_contiguous_chunks
+from actuator_network.helpers.data_pipeline import load_mcap_files_parallel
+from actuator_network.helpers.pandas_to_torch import normalize_tensor
 from actuator_network.helpers.torch_model import TorchRNNModel
 from actuator_network.helpers.trainer import train_stateful
 from actuator_network.helpers.wrapper import ModelSaver, ScaledModelWrapper
@@ -30,25 +27,18 @@ def main():
         "/workspace/data/training_data/2026_08_19/rosbag2_2026_08_19-12_40_03_0.mcap",
     ]
 
-    all_input_chunks = torch.empty((0, seq_length, len(input_cols)), device=device)
-    all_output_chunks = torch.empty((0, seq_length, len(output_cols)), device=device)
-
-    for mcap_file_path in mcap_file_paths:
-        data_df = read_mcap_to_dataframe(mcap_file_path)
-        data_df_extrapolated = extrapolate_dataframe(data_df, freq=freq)
-        # Remove duplicate timestamps by keeping the first occurrence
-        data_df_extrapolated = data_df_extrapolated.groupby(data_df_extrapolated.index).first()
-        process_dataframe(data_df_extrapolated)
-        data_df_to_mcap(data_df_extrapolated, mcap_file_path.replace(".mcap", "_processed.mcap"))
-        col_names, data_tensor = pandas_to_torch(data_df_extrapolated, device=device)
-        input_indices = [col_names.index(col) for col in input_cols]
-        output_indices = [col_names.index(col) for col in output_cols]
-
-        input_chunks = make_contiguous_chunks(data_tensor[:, input_indices], seq_length)
-        output_chunks = make_contiguous_chunks(data_tensor[:, output_indices], seq_length)
-
-        all_input_chunks = torch.cat((all_input_chunks, input_chunks), dim=0)
-        all_output_chunks = torch.cat((all_output_chunks, output_chunks), dim=0)
+    all_input_chunks, all_output_chunks = load_mcap_files_parallel(
+        mcap_file_paths,
+        freq=freq,
+        input_cols=input_cols,
+        output_cols=output_cols,
+        history_size=seq_length,
+        stride=stride,
+        prediction=prediction,
+        rnn_mode=True,
+    )
+    all_input_chunks = all_input_chunks.to(device)
+    all_output_chunks = all_output_chunks.to(device)
 
     inputs_normalized, inputs_mean, inputs_std = normalize_tensor(all_input_chunks)
     outputs_normalized, outputs_mean, outputs_std = normalize_tensor(all_output_chunks)
