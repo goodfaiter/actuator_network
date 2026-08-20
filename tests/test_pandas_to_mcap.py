@@ -2,6 +2,7 @@ import os
 import tempfile
 
 import pandas as pd
+import pytest
 from mcap_ros2.reader import read_ros2_messages
 
 from actuator_network.helpers.pandas_to_mcap import data_df_to_mcap
@@ -28,3 +29,26 @@ def test_data_df_to_mcap_creates_single_file():
 
         topic_names = {msg.channel.topic for msg in msgs}
         assert topic_names == {"/desired_position_rad_data", "/load_newton_data"}
+
+
+def test_data_df_to_mcap_roundtrip_preserves_values():
+    """Writing a DataFrame and reading it back should preserve float values and timestamps."""
+    timestamps = pd.date_range(start="2026-01-01", periods=10, freq="10ms")
+    df = pd.DataFrame(
+        {
+            "desired_position_rad_data": [0.1 * i for i in range(10)],
+        },
+        index=timestamps,
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_path = os.path.join(tmpdir, "output.mcap")
+        data_df_to_mcap(df, output_path)
+
+        msgs = list(read_ros2_messages(output_path))
+        assert len(msgs) == len(df)
+
+        for msg, expected_ts, expected_val in zip(msgs, timestamps, df["desired_position_rad_data"]):
+            assert msg.channel.topic == "/desired_position_rad_data"
+            assert msg.log_time_ns == expected_ts.value
+            assert msg.ros_msg.data == pytest.approx(expected_val)

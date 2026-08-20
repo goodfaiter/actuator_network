@@ -4,21 +4,13 @@ import pandas as pd
 def extrapolate_dataframe(df: pd.DataFrame, freq: int) -> pd.DataFrame:
     """Resample dataframe to fixed frequency with proper interpolation"""
 
-    # Create target index at desired frequency
-    target_period = f"{1000 // freq}ms"
+    # Create target index at the exact desired frequency.
+    target_period = pd.Timedelta(seconds=1.0 / freq)
 
-    # First, upsample to a higher frequency for smoother interpolation
-    higher_freq = f"{1000 // (freq * 2)}ms"  # Double the frequency for upsampling
-    df_upsampled = df.resample(higher_freq).mean()
-
-    # Interpolate with method appropriate for your data
-    df_interpolated = df_upsampled.interpolate(method="linear")  # or 'time', 'quadratic', 'cubic'
-
-    # Now downsample to target frequency
-    df_extrapolated = df_interpolated.resample(target_period).asfreq()
-
-    # Fill any remaining NaNs (at edges) with nearest values
-    df_extrapolated = df_extrapolated.interpolate(method="linear").bfill().ffill()
+    # Resample directly to the target frequency and interpolate missing values.
+    df_extrapolated = df.resample(target_period).mean().interpolate(
+        method="linear", limit_direction="both"
+    )
 
     df_extrapolated.index = df_extrapolated.index - df_extrapolated.index[0]
 

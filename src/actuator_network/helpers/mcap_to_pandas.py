@@ -49,20 +49,19 @@ def read_mcap_to_dataframe(file_path: str, topics: list = None) -> pd.DataFrame:
             "/bota/wrench_N_and_Nm",
         ]
 
+    # Cache sanitized topic names to avoid repeated string manipulation per message.
+    topic_name_map = {topic: topic[1:].replace("/", "_") for topic in topics}
+
     msgs = read_ros2_messages(file_path, topics=topics)
 
-    # Use list comprehensions for better performance
-    processed_data = [
-        (msg.log_time_ns, process_field(msg.channel.topic[1:].replace("/", "_"), msg.ros_msg)) for msg in msgs
-    ]
-
-    # Filter out None values and separate timestamps from data
     timestamps = []
     data_dicts = []
 
-    for timestamp, data in processed_data:
+    # Single pass: process and filter messages in one loop.
+    for msg in msgs:
+        data = process_field(topic_name_map[msg.channel.topic], msg.ros_msg)
         if data is not None:
-            timestamps.append(timestamp)
+            timestamps.append(msg.log_time_ns)
             data_dicts.append(data)
 
     # Create DataFrame with timestamp as index in one operation

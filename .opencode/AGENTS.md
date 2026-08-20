@@ -177,7 +177,11 @@ uv run python plot_rmse.py
 
 4. **Plot scripts are hardcoded to specific experimental files.** They will fail on a fresh checkout without the matching `data/` contents. They are intended for reproducing paper figures, not as a generic plotting CLI.
 
-5. **No tests or CI.** There is no test suite or CI yet. Agents adding non-trivial logic should add small sanity checks (e.g. shape tests for `process_inputs_time_series`) and run `uv run pytest`.
+5. **Tests exist under `tests/`.** The ROS2 environment installs pytest plugins that conflict with plain `uv run pytest`, so disable plugin autoloading when running tests:
+   ```bash
+   PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest tests/
+   ```
+   Agents adding non-trivial logic should add small sanity checks and run the command above.
 
 ## Useful commands
 
@@ -199,6 +203,9 @@ cd src/actuator_network/plots
 uv run python plot_rmse.py
 
 # Lint / format
-uv run ruff check src
-uv run ruff format src
+uv run ruff check src tests
+uv run ruff format src tests
+
+# Tests
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest tests/
 ```

@@ -37,12 +37,13 @@ def data_df_to_mcap(df, mcap_file_path: str):
                 rosbag2_py.TopicMetadata(name=f"/{topic}", type="std_msgs/msg/Float32", serialization_format="cdr")
             )
 
+        timestamps = [int(ts) for ts in df.index.astype("int64")]
+        msg = Float32()
         for topic in df.columns:
-            for i in range(len(df)):
-                msg = Float32()
-                msg.data = df.iloc[i][topic]
-                timestamp = df.index[i].value
-                writer.write(f"/{topic}", serialize_message(msg), timestamp)
+            values = df[topic].to_numpy(dtype=float)
+            for i, value in enumerate(values):
+                msg.data = float(value)
+                writer.write(f"/{topic}", serialize_message(msg), timestamps[i])
 
         writer.close()
 
