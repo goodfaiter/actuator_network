@@ -194,9 +194,11 @@ uv pip install -e . --link-mode=copy
 uv run train-mlp
 uv run train-rnn
 uv run train-transformer
+uv run train-m5
 
 # Inference
 uv run predict
+uv run test-m5
 
 # Plots
 cd src/actuator_network/plots

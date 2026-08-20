@@ -64,6 +64,7 @@ def test_load_mcap_files_parallel_matches_serial():
         history_size=10,
         stride=1,
         prediction=False,
+        write_processed=False,
         max_workers=2,
     )
 

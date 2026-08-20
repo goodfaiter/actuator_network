@@ -3,6 +3,7 @@
 from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
+import pandas as pd
 import torch
 
 from actuator_network.helpers.mcap_to_pandas import read_mcap_to_dataframe
@@ -97,6 +98,7 @@ def load_mcap_files_parallel(
     stride: int,
     prediction: bool,
     rnn_mode: bool = False,
+    write_processed: bool = True,
     max_workers: int | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Process multiple MCAP files in parallel and concatenate the resulting tensors.
@@ -110,6 +112,7 @@ def load_mcap_files_parallel(
         stride: Stride between consecutive history steps.
         prediction: Whether to shift outputs for prediction mode.
         rnn_mode: If True, split the tensor into contiguous chunks for stateful RNN training.
+        write_processed: If True, write the processed DataFrame back to an MCAP file.
         max_workers: Maximum number of parallel workers. None uses all CPUs.
 
     Returns:
@@ -124,7 +127,7 @@ def load_mcap_files_parallel(
             "history_size": history_size,
             "stride": stride,
             "prediction": prediction,
-            "write_processed": True,
+            "write_processed": write_processed,
             "rnn_mode": rnn_mode,
         }
         for path in mcap_file_paths
@@ -144,3 +147,48 @@ def load_mcap_files_parallel(
     all_inputs_np = np.concatenate([result[0] for result in results], axis=0)
     all_outputs_np = np.concatenate([result[1] for result in results], axis=0)
     return torch.from_numpy(all_inputs_np), torch.from_numpy(all_outputs_np)
+
+
+def _process_mcap_dataframe(mcap_file_path: str, freq: int) -> pd.DataFrame:
+    """Read and process a single MCAP file into a DataFrame."""
+    data_df = read_mcap_to_dataframe(mcap_file_path)
+    data_df_extrapolated = extrapolate_dataframe(data_df, freq=freq)
+    # Remove duplicate timestamps by keeping the first occurrence
+    data_df_extrapolated = data_df_extrapolated.groupby(data_df_extrapolated.index).first()
+    process_dataframe(data_df_extrapolated)
+    return data_df_extrapolated
+
+
+def load_mcap_dataframes_parallel(
+    mcap_file_paths: list[str],
+    freq: int,
+    max_workers: int | None = None,
+) -> list[pd.DataFrame]:
+    """Load and process multiple MCAP files in parallel, returning DataFrames.
+
+    Args:
+        mcap_file_paths: List of paths to input MCAP files.
+        freq: Target resampling frequency in Hz.
+        max_workers: Maximum number of parallel workers. None uses all CPUs.
+
+    Returns:
+        List of processed DataFrames, one per input file.
+    """
+    # Limit PyTorch to a single CPU thread before forking. PyTorch's internal
+    # thread pools are not fork-safe and can deadlock in worker processes.
+    # The original value is restored after loading.
+    torch_threads = torch.get_num_threads()
+    torch.set_num_threads(1)
+    try:
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            dfs = list(
+                executor.map(
+                    _process_mcap_dataframe,
+                    mcap_file_paths,
+                    [freq] * len(mcap_file_paths),
+                )
+            )
+    finally:
+        torch.set_num_threads(torch_threads)
+
+    return dfs
