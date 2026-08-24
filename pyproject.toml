@@ -34,10 +34,12 @@ train-mlp = "actuator_network.train_mlp:main"
 train-rnn = "actuator_network.train_rnn:main"
 train-transformer = "actuator_network.train_transformer:main"
 train-m5 = "actuator_network.train_m5:main"
+train-m5-transformer = "actuator_network.train_m5_transformer:main"
 test-mlp = "actuator_network.test_mlp:main"
 test-rnn = "actuator_network.test_rnn:main"
 test-transformer = "actuator_network.test_transformer:main"
 test-m5 = "actuator_network.test_m5:main"
+test-m5-transformer = "actuator_network.test_m5_transformer:main"
 
 [project.urls]
 repository = "https://github.com/goodfaiter/actuator_network"

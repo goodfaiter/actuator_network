@@ -1,4 +1,4 @@
-"""Run Transformer inference on test MCAPs one timestep at a time."""
+"""Run M5 + Transformer physics-coupled inference on test MCAPs one timestep at a time."""
 
 import torch
 
@@ -7,15 +7,15 @@ from actuator_network.helpers.pandas_processing import extrapolate_dataframe, pr
 from actuator_network.helpers.pandas_to_mcap import data_df_to_mcap
 from actuator_network.helpers.pandas_to_torch import pandas_to_torch
 
-DEFAULT_MODEL_PATH = "/workspace/data/output_data/best_latest.pt"
+DEFAULT_MODEL_PATH = "/workspace/data/output_data/best_m5_transformer_latest.pt"
 
 
-def run_transformer_inference(
+def run_m5_transformer_inference(
     model_path: str,
     mcap_file_paths: list[str],
     data_freq: int,
 ) -> list[str]:
-    """Run Transformer inference on the given MCAPs and write prediction MCAPs.
+    """Run M5 + Transformer inference on the given MCAPs and write prediction MCAPs.
 
     Inference is performed one timestep at a time with a sliding history window,
     matching the intended deployment pattern and keeping memory usage low.
@@ -30,7 +30,7 @@ def run_transformer_inference(
     """
     device = torch.device("cpu")
 
-    print("Loading Transformer model...")
+    print("Loading M5 + Transformer model...")
     model = torch.jit.load(model_path, map_location=device)
 
     stride = int(model.stride.item())
@@ -69,7 +69,7 @@ def run_transformer_inference(
         for i, col in enumerate(output_cols):
             data_df_extrapolated[col + "_predicted"] = predictions[:, i].numpy()
 
-        output_path = mcap_file_path.replace(".mcap", "_predicted.mcap")
+        output_path = mcap_file_path.replace(".mcap", "_m5_transformer_predicted.mcap")
         data_df_to_mcap(data_df_extrapolated, output_path)
         print(f"  wrote {output_path}")
         output_paths.append(output_path)
@@ -85,7 +85,7 @@ def main():
         "/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_52_16_0.mcap",  # finger, mixed 200Hz
     ]
 
-    run_transformer_inference(DEFAULT_MODEL_PATH, mcap_file_paths, data_freq)
+    run_m5_transformer_inference(DEFAULT_MODEL_PATH, mcap_file_paths, data_freq)
 
 
 if __name__ == "__main__":

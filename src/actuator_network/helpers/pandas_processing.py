@@ -8,9 +8,7 @@ def extrapolate_dataframe(df: pd.DataFrame, freq: int) -> pd.DataFrame:
     target_period = pd.Timedelta(seconds=1.0 / freq)
 
     # Resample directly to the target frequency and interpolate missing values.
-    df_extrapolated = df.resample(target_period).mean().interpolate(
-        method="linear", limit_direction="both"
-    )
+    df_extrapolated = df.resample(target_period).mean().interpolate(method="linear", limit_direction="both")
 
     df_extrapolated.index = df_extrapolated.index - df_extrapolated.index[0]
 

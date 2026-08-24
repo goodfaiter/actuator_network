@@ -28,15 +28,9 @@ def test_m5_forward_matches_formula():
     # Manual computation
     v_s = torch.nn.functional.softplus(torch.tensor(0.0)) + 1e-6
     alpha = torch.nn.functional.softplus(torch.tensor(0.0)) + 1e-6
-    static = (
-        0.1 * velocity
-        + 0.2
-        + torch.abs(0.3 * tau_motor - 0.4 * tau_external)
-    )
-    stribeck = torch.exp(-torch.abs(velocity / v_s).clamp_min(1e-8) ** alpha)
-    expected = static + stribeck * (
-        0.5 + torch.abs(0.6 * tau_motor - 0.7 * tau_external)
-    )
+    static = 0.1 * velocity + 0.2 + torch.abs(0.3 * tau_motor - 0.4 * tau_external)
+    stribeck = torch.exp(-(torch.abs(velocity / v_s).clamp_min(1e-8) ** alpha))
+    expected = static + stribeck * (0.5 + torch.abs(0.6 * tau_motor - 0.7 * tau_external))
 
     assert torch.allclose(prediction, expected, atol=1e-6)
 
