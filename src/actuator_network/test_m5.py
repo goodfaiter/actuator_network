@@ -7,8 +7,19 @@ import torch
 from actuator_network.helpers.data_pipeline import load_mcap_dataframes_parallel
 from actuator_network.helpers.m5_model import M5FrictionModel
 from actuator_network.helpers.pandas_to_mcap import data_df_to_mcap
+from actuator_network.helpers.pandas_to_torch import pandas_to_torch
+from actuator_network.helpers.torch_model import PlainM5PhysicsModel
+from actuator_network.helpers.wrapper import ScaledModelWrapper
 
 MODEL_PARAMS_PATH = "/workspace/data/output_data/m5_friction_params.json"
+
+INPUT_COLUMNS = ["delta_position_rad_data", "measured_velocity_rad_per_sec_data"]
+OUTPUT_COLUMNS = [
+    "tendon_bota_force_newton_data",
+    "tau_motor_newton_data",
+    "tau_friction_newton_data",
+    "tau_external_pred_newton_data",
+]
 
 
 def load_m5_model(params_path: str, device: torch.device) -> M5FrictionModel:
@@ -20,6 +31,36 @@ def load_m5_model(params_path: str, device: torch.device) -> M5FrictionModel:
     model.set_physical_parameters(params)
     model.eval()
     return model
+
+
+def _build_scripted_plain_m5(m5: M5FrictionModel, data_freq: int, device: torch.device):
+    """Wrap a frozen M5 model so its JIT forward pass returns physics intermediates."""
+    m5.eval()
+    m5.requires_grad_(False)
+
+    physics = PlainM5PhysicsModel(m5).to(device)
+    physics.eval()
+
+    input_mean = torch.zeros(len(INPUT_COLUMNS), device=device)
+    input_std = torch.ones(len(INPUT_COLUMNS), device=device)
+    output_mean = torch.zeros(len(OUTPUT_COLUMNS), device=device)
+    output_std = torch.ones(len(OUTPUT_COLUMNS), device=device)
+
+    wrapped = ScaledModelWrapper(
+        physics,
+        input_mean,
+        input_std,
+        output_mean,
+        output_std,
+        frequency=data_freq,
+        history_size=1,
+        stride=1,
+        prediction=False,
+        input_columns=INPUT_COLUMNS,
+        output_columns=OUTPUT_COLUMNS,
+    )
+    wrapped.eval()
+    return torch.jit.script(wrapped)
 
 
 def run_m5_inference(
@@ -35,33 +76,36 @@ def run_m5_inference(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     print("Loading M5 model...")
-    model = load_m5_model(params_path, device=device)
+    m5 = load_m5_model(params_path, device=device)
+    model = _build_scripted_plain_m5(m5, data_freq, device=device)
 
     print("Loading and processing MCAP files in parallel...")
     dataframes = load_mcap_dataframes_parallel(mcap_file_paths, freq=data_freq)
 
     output_paths = []
     for mcap_file_path, df in zip(mcap_file_paths, dataframes):
-        velocity = torch.tensor(df["measured_velocity_rad_per_sec_data"].to_numpy(), dtype=torch.float32, device=device)
-        delta_position = torch.tensor(df["delta_position_rad_data"].to_numpy(), dtype=torch.float32, device=device)
-        tau_external = torch.tensor(df["tendon_bota_force_newton_data"].to_numpy(), dtype=torch.float32, device=device)
+        col_names, data_tensor = pandas_to_torch(df, device=device)
+        input_indices = [col_names.index(col) for col in model.input_columns]
+        features = data_tensor[:, input_indices]
 
-        tau_motor = 4.2 * delta_position
+        output_cols = model.output_columns
+        predictions = torch.full(
+            (features.shape[0], len(output_cols)),
+            float("nan"),
+            dtype=torch.float32,
+            device=device,
+        )
 
         # Predict only on finite rows; leave NaNs as NaN in the output.
-        valid_mask = torch.isfinite(velocity) & torch.isfinite(tau_motor) & torch.isfinite(tau_external)
-        df["m5_newton_predicted"] = float("nan")
-
+        valid_mask = torch.isfinite(features).all(dim=1)
         if valid_mask.any():
-            velocity_valid = velocity[valid_mask]
-            tau_motor_valid = tau_motor[valid_mask]
-            tau_external_valid = tau_external[valid_mask]
-
+            features_valid = features[valid_mask]
             with torch.no_grad():
-                tau_friction = model(velocity_valid, tau_motor_valid, tau_external_valid)
-            tau_external_predicted = tau_motor_valid - tau_friction
+                pred = model(features_valid)  # [N_valid, 1, 4]
+            predictions[valid_mask] = pred[:, 0, :]
 
-            df.loc[df.index[valid_mask.cpu().numpy()], "m5_newton_predicted"] = tau_external_predicted.cpu().numpy()
+        for i, col in enumerate(output_cols):
+            df[col + "_predicted"] = predictions[:, i].cpu().numpy()
 
         output_path = mcap_file_path.replace(".mcap", "_m5_predicted.mcap")
         data_df_to_mcap(df, output_path)

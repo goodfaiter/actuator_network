@@ -74,7 +74,12 @@ def _make_dummy_scripted_model(tmpdir: str) -> str:
         stride=1,
         prediction=False,
         input_columns=["delta_position_rad_data", "measured_velocity_rad_per_sec_data"],
-        output_columns=["tendon_bota_force_newton_data"],
+        output_columns=[
+            "tendon_bota_force_newton_data",
+            "tau_motor_newton_data",
+            "tau_friction_newton_data",
+            "tau_external_pred_newton_data",
+        ],
     )
     wrapped.eval()
     combined.eval()

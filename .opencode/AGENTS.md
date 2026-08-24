@@ -12,6 +12,7 @@ Supported model families:
 - RNN (`TorchRNNModel`)
 - Transformer (`TorchTransformerModel`)
 - M5 + Transformer physics-coupled model (`M5TransformerPhysicsModel`)
+- Plain M5 physics-coupled model (`PlainM5PhysicsModel`)
 
 The trained model is wrapped in `ScaledModelWrapper`, which includes input/output normalization, and exported as TorchScript for deployment.
 
@@ -41,7 +42,7 @@ The trained model is wrapped in `ScaledModelWrapper`, which includes input/outpu
 │   │   ├── pandas_processing.py        # Resample, derive load, filter, derivative
 │   │   ├── pandas_to_torch.py          # Build history windows / sequences, normalize
 │   │   ├── pandas_to_mcap.py           # Write DataFrame columns back to MCAP
-│   │   ├── torch_model.py              # MLP, RNN, Transformer, M5+Transformer definitions
+│   │   ├── torch_model.py              # MLP, RNN, Transformer, M5 physics definitions
 │   │   ├── trainer.py                  # Custom training loop with W&B logging
 │   │   └── wrapper.py                  # ScaledModelWrapper + ModelSaver + TorchScript export
 │   └── plots/                          # Matplotlib scripts for paper figures
@@ -144,6 +145,15 @@ Each training script:
 8. Saves the best, final, and periodic checkpoints as TorchScript `.pt` files in `data/output_data/`.
 
 The `train_m5.py` and `train_m5_transformer.py` scripts now treat the motor gain `P` in `tau_motor = P * delta_position` as an optionally trainable parameter (positive-constrained via softplus). Set `trainable_motor_gain = True/False` in either script. `train_m5_transformer.py` additionally loads a pre-fit M5 friction model from `data/output_data/m5_friction_params.json` as an initial guess, then jointly trains the Transformer and (optionally) the M5 friction parameters so that the final output is `tau_external_calculated = tau_motor - tau_friction(tau_external_predicted)`. It uses an auxiliary loss on the Transformer's `tau_external` prediction and gradient clipping, and saves the final fitted M5 parameters (including the learned motor gain) to `data/output_data/m5_joint_friction_params.json`. Set `m5_trainable = False` to keep the friction parameters frozen, and `motor_gain_trainable = False` to keep the gain frozen.
+
+Both M5-based deployable models now return a 4-channel output:
+
+- `tendon_bota_force_newton_data` (channel 0): `tau_external_calculated`
+- `tau_motor_newton_data` (channel 1)
+- `tau_friction_newton_data` (channel 2)
+- `tau_external_pred_newton_data` (channel 3): raw Transformer prediction for M5 + Transformer, or the same calculated external force for the plain M5 model
+
+All four channels share the same physical unit (Newtons) and the same output normalization statistics.
 
 Key configuration knobs in the training scripts:
 
