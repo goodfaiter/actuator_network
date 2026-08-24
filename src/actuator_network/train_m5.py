@@ -13,8 +13,8 @@ from actuator_network.helpers.m5_model import M5FrictionModel
 def prepare_tensors_from_dataframes(
     dataframes: list,
     device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Concatenate processed DataFrames and extract model inputs and target."""
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Concatenate processed DataFrames and extract raw model inputs."""
     import pandas as pd
 
     df = pd.concat(dataframes, ignore_index=True)
@@ -23,19 +23,13 @@ def prepare_tensors_from_dataframes(
     delta_position = torch.tensor(df["delta_position_rad_data"].to_numpy(), dtype=torch.float32, device=device)
     tau_external = torch.tensor(df["tendon_bota_force_newton_data"].to_numpy(), dtype=torch.float32, device=device)
 
-    tau_motor = 4.2 * delta_position
-    target = tau_motor - tau_external
-
     # Drop NaN/Inf rows
-    valid_mask = (
-        torch.isfinite(velocity) & torch.isfinite(tau_motor) & torch.isfinite(tau_external) & torch.isfinite(target)
-    )
+    valid_mask = torch.isfinite(velocity) & torch.isfinite(delta_position) & torch.isfinite(tau_external)
     velocity = velocity[valid_mask]
-    tau_motor = tau_motor[valid_mask]
+    delta_position = delta_position[valid_mask]
     tau_external = tau_external[valid_mask]
-    target = target[valid_mask]
 
-    return velocity, tau_motor, tau_external, target
+    return velocity, delta_position, tau_external
 
 
 def main():
@@ -44,6 +38,7 @@ def main():
     num_epochs = 2000
     learning_rate = 0.01
     patience = 200
+    trainable_motor_gain = False
     mcap_file_paths = [
         "/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_03_30_0.mcap",  # finger, mixed 200Hz
         "/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_52_16_0.mcap",  # finger, mixed 200Hz
@@ -61,10 +56,10 @@ def main():
     dataframes = load_mcap_dataframes_parallel(mcap_file_paths, freq=data_freq)
 
     print("Preparing tensors...")
-    velocity, tau_motor, tau_external, target = prepare_tensors_from_dataframes(dataframes, device=device)
+    velocity, delta_position, tau_external = prepare_tensors_from_dataframes(dataframes, device=device)
     print(f"  samples after cleaning: {velocity.shape[0]}")
 
-    model = M5FrictionModel().to(device)
+    model = M5FrictionModel(motor_gain=4.2, trainable_motor_gain=trainable_motor_gain).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=patience // 4)
 
@@ -74,6 +69,8 @@ def main():
     print("Fitting M5 friction model...")
     for epoch in range(num_epochs):
         optimizer.zero_grad()
+        tau_motor = model.compute_tau_motor(delta_position)
+        target = tau_motor - tau_external
         prediction = model(velocity, tau_motor, tau_external)
         loss = functional.mse_loss(prediction, target)
         loss.backward()

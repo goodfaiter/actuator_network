@@ -57,6 +57,11 @@ def _make_model(input_dim: int = 2, history_size: int = 8, output_dim: int = 1):
     return model
 
 
+def _initial_motor_gain(combined: M5TransformerPhysicsModel) -> float:
+    """Return the current motor gain of the combined model as a float."""
+    return float(combined.m5.motor_gain_value().item())
+
+
 def test_m5_transformer_physics_forward_shape():
     """The combined model should return [Batch, 1, Output Dim]."""
     model = _make_model()
@@ -105,7 +110,6 @@ def test_m5_transformer_physics_computes_tau_external():
         output_std=output_std,
         delta_position_idx=0,
         velocity_idx=1,
-        motor_gain=4.2,
     )
 
     batch = 4
@@ -113,7 +117,9 @@ def test_m5_transformer_physics_computes_tau_external():
     x = torch.randn(batch, history, 2)
     # delta_position is the first feature at the last timestep
     delta_position = x[:, -1, 0]
-    expected_phys = 4.2 * delta_position - 0.5
+    with torch.no_grad():
+        motor_gain = model.m5.motor_gain_value().item()
+    expected_phys = motor_gain * delta_position - 0.5
     expected_norm = (expected_phys - output_mean) / output_std
 
     with torch.no_grad():
@@ -140,21 +146,31 @@ def test_m5_transformer_physics_gradients_flow_to_transformer():
 
 
 def test_load_m5_model_respects_trainable_flag():
-    """Loading with trainable=True/False should set requires_grad accordingly."""
+    """Loading with trainable/motor_gain_trainable flags should set requires_grad accordingly."""
     params = _dummy_m5_params()
     with tempfile.TemporaryDirectory() as tmpdir:
         params_path = os.path.join(tmpdir, "params.json")
         with open(params_path, "w") as f:
             json.dump(params, f)
 
-        frozen = load_m5_model(params_path, torch.device("cpu"), trainable=False)
-        assert not any(p.requires_grad for p in frozen.parameters())
-        loaded_frozen = frozen.named_physical_parameters()
+        fully_frozen = load_m5_model(
+            params_path, torch.device("cpu"), trainable=False, motor_gain_trainable=False
+        )
+        assert not any(p.requires_grad for p in fully_frozen.parameters())
+        loaded_frozen = fully_frozen.named_physical_parameters()
         for key, value in params.items():
             assert loaded_frozen[key] == pytest.approx(value, abs=1e-5)
 
-        trainable = load_m5_model(params_path, torch.device("cpu"), trainable=True)
-        assert all(p.requires_grad for p in trainable.parameters())
+        fully_trainable = load_m5_model(
+            params_path, torch.device("cpu"), trainable=True, motor_gain_trainable=True
+        )
+        assert all(p.requires_grad for p in fully_trainable.parameters())
+
+        friction_only = load_m5_model(
+            params_path, torch.device("cpu"), trainable=True, motor_gain_trainable=False
+        )
+        assert friction_only.Kv.requires_grad
+        assert not friction_only.motor_gain_log.requires_grad
 
 
 def _make_small_combined_model(params_path: str, device: torch.device, trainable: bool):
@@ -264,3 +280,74 @@ def test_train_m5_transformer_keeps_m5_fixed_when_not_trainable():
 
         final_kv = float(combined.m5.Kv.item())
         assert final_kv == pytest.approx(initial_kv, abs=1e-6)
+
+
+def test_train_m5_transformer_updates_motor_gain_when_trainable():
+    """Joint training should update the M5 motor gain when it is trainable."""
+    device = torch.device("cpu")
+    params = _dummy_m5_params()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        params_path = os.path.join(tmpdir, "params.json")
+        with open(params_path, "w") as f:
+            json.dump(params, f)
+
+        combined, wrapped = _make_small_combined_model(params_path, device, trainable=False)
+        # Make sure only the motor gain is trainable.
+        combined.m5.set_friction_trainable(False)
+        combined.m5.motor_gain_log.requires_grad = True
+        saver = ModelSaver(wrapped, tmpdir)
+
+        inputs = torch.randn(64, 2, 2)
+        outputs = torch.randn(64, 1, 1)
+        initial_gain = _initial_motor_gain(combined)
+
+        with patch("actuator_network.train_m5_transformer.wandb") as mock_wandb:
+            mock_wandb.init.return_value = MagicMock()
+            train_m5_transformer(
+                combined,
+                inputs,
+                outputs,
+                model_saver=saver,
+                num_epochs=2,
+                batch_size=16,
+                aux_weight=0.1,
+                max_grad_norm=1.0,
+            )
+
+        final_gain = _initial_motor_gain(combined)
+        assert final_gain != pytest.approx(initial_gain, abs=1e-6)
+
+
+def test_train_m5_transformer_keeps_motor_gain_fixed_when_not_trainable():
+    """Joint training should not update the M5 motor gain when it is frozen."""
+    device = torch.device("cpu")
+    params = _dummy_m5_params()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        params_path = os.path.join(tmpdir, "params.json")
+        with open(params_path, "w") as f:
+            json.dump(params, f)
+
+        combined, wrapped = _make_small_combined_model(params_path, device, trainable=False)
+        combined.m5.set_friction_trainable(False)
+        combined.m5.motor_gain_log.requires_grad = False
+        saver = ModelSaver(wrapped, tmpdir)
+
+        inputs = torch.randn(64, 2, 2)
+        outputs = torch.randn(64, 1, 1)
+        initial_gain = _initial_motor_gain(combined)
+
+        with patch("actuator_network.train_m5_transformer.wandb") as mock_wandb:
+            mock_wandb.init.return_value = MagicMock()
+            train_m5_transformer(
+                combined,
+                inputs,
+                outputs,
+                model_saver=saver,
+                num_epochs=2,
+                batch_size=16,
+                aux_weight=0.1,
+                max_grad_norm=1.0,
+            )
+
+        final_gain = _initial_motor_gain(combined)
+        assert final_gain == pytest.approx(initial_gain, abs=1e-6)
