@@ -143,7 +143,7 @@ Each training script:
 7. Trains with a 90/10 train/val split, MSE loss, Adam optimizer, and logs to Weights & Biases.
 8. Saves the best, final, and periodic checkpoints as TorchScript `.pt` files in `data/output_data/`.
 
-The `train_m5_transformer.py` script additionally loads a pre-fit M5 friction model from `data/output_data/m5_friction_params.json`, freezes it, and trains a Transformer so that the final output is `tau_external_calculated = tau_motor - tau_friction(tau_external_predicted)`.
+The `train_m5_transformer.py` script loads a pre-fit M5 friction model from `data/output_data/m5_friction_params.json` as an initial guess, then jointly trains the Transformer and (optionally) the M5 parameters so that the final output is `tau_external_calculated = tau_motor - tau_friction(tau_external_predicted)`. It uses an auxiliary loss on the Transformer's `tau_external` prediction and gradient clipping, and saves the final fitted M5 parameters to `data/output_data/m5_joint_friction_params.json`. Set `m5_trainable = False` in the script to keep M5 frozen as a fixed physics prior.
 
 Key configuration knobs in the training scripts:
 
@@ -156,10 +156,22 @@ Key configuration knobs in the training scripts:
 ### 3. Run inference
 
 ```bash
-uv run predict
+uv run test-mlp
+uv run test-rnn
+uv run test-transformer
+uv run test-m5
+uv run test-m5-transformer
 ```
 
-`test.py` loads `data/output_data/final_latest.pt` (TorchScript), inspects its stored metadata (frequency, history size, stride, model type, input/output columns), builds the matching input tensor, runs the model, and writes a `_predicted.mcap` with the new `*_predicted` columns.
+Each `test-*.py` script loads the matching `best_<model>_latest.pt` TorchScript model (e.g., `best_transformer_latest.pt`), inspects its stored metadata (frequency, history size, stride, model type, input/output columns), builds the matching input tensor, runs the model, and writes a `<input>_<model>_predicted.mcap` with the new `*_predicted` columns.
+
+| Model | Checkpoint loaded | MCAP suffix |
+|---|---|---|
+| MLP | `best_mlp_latest.pt` | `_mlp_predicted.mcap` |
+| RNN | `best_rnn_latest.pt` | `_rnn_predicted.mcap` |
+| Transformer | `best_transformer_latest.pt` | `_transformer_predicted.mcap` |
+| M5 | `m5_friction_params.json` | `_m5_predicted.mcap` |
+| M5 + Transformer | `best_m5_transformer_latest.pt` | `_m5_transformer_predicted.mcap` |
 
 ### 4. Generate plots
 
@@ -212,9 +224,10 @@ uv run train-m5
 uv run train-m5-transformer
 
 # Inference
-uv run predict
-uv run test-m5
+uv run test-mlp
+uv run test-rnn
 uv run test-transformer
+uv run test-m5
 uv run test-m5-transformer
 
 # Plots

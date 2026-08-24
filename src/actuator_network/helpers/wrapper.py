@@ -70,19 +70,25 @@ class ScaledModelWrapper(nn.Module):
         """Freeze model weights and disable gradients."""
         self.eval()  # Disables dropout/BatchNorm training behavior
         self.model.eval()  # Disables dropout/BatchNorm training behavior
-        for param in self.parameters():
-            param.requires_grad = False
-        for param in self.model.parameters():
+        self._original_requires_grad = {}
+        for name, param in self.named_parameters():
+            self._original_requires_grad[name] = param.requires_grad
             param.requires_grad = False
 
     def unfreeze(self) -> None:
-        """Unfreeze model weights."""
+        """Unfreeze model weights.
+
+        Restores each parameter's original ``requires_grad`` value from before
+        :meth:`freeze` was called. This preserves intentionally frozen submodules
+        (e.g., a fixed M5 physics prior).
+        """
         self.train()  # Re-enables BatchNorm running stats updates
         self.model.train()  # Re-enables BatchNorm running stats updates
-        for param in self.parameters():
-            param.requires_grad = True
-        for param in self.model.parameters():
-            param.requires_grad = True
+        if hasattr(self, "_original_requires_grad"):
+            for name, param in self.named_parameters():
+                if name in self._original_requires_grad:
+                    param.requires_grad = self._original_requires_grad[name]
+            del self._original_requires_grad
 
     def trace_and_save(self, save_path: str) -> torch.jit.ScriptModule:
         """

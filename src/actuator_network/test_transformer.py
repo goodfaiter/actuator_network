@@ -7,7 +7,7 @@ from actuator_network.helpers.pandas_processing import extrapolate_dataframe, pr
 from actuator_network.helpers.pandas_to_mcap import data_df_to_mcap
 from actuator_network.helpers.pandas_to_torch import pandas_to_torch
 
-DEFAULT_MODEL_PATH = "/workspace/data/output_data/best_latest.pt"
+DEFAULT_MODEL_PATH = "/workspace/data/output_data/best_transformer_latest.pt"
 
 
 def run_transformer_inference(
@@ -69,7 +69,7 @@ def run_transformer_inference(
         for i, col in enumerate(output_cols):
             data_df_extrapolated[col + "_predicted"] = predictions[:, i].numpy()
 
-        output_path = mcap_file_path.replace(".mcap", "_predicted.mcap")
+        output_path = mcap_file_path.replace(".mcap", "_transformer_predicted.mcap")
         data_df_to_mcap(data_df_extrapolated, output_path)
         print(f"  wrote {output_path}")
         output_paths.append(output_path)
@@ -81,8 +81,9 @@ def main():
     # Configuration
     data_freq = 200  # Hz, must match training
     mcap_file_paths = [
-        "/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_03_30_0.mcap",  # finger, mixed 200Hz
-        "/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_52_16_0.mcap",  # finger, mixed 200Hz
+        "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-11_58_32_0.mcap",  # finger, mixed 200Hz
+        "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_18_38_0.mcap",  # weak spring, mixed 200Hz
+        "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_34_43_0.mcap",  # strong spring, mixed 200Hz
     ]
 
     run_transformer_inference(DEFAULT_MODEL_PATH, mcap_file_paths, data_freq)

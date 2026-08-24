@@ -58,7 +58,7 @@ def main():
         output_columns=output_cols,
     )
     model_saver = ModelSaver(wrapped_model, "/workspace/data/output_data/")
-    train(model, inputs_normalized, outputs_normalized, model_saver=model_saver)
+    train(model, inputs_normalized, outputs_normalized, model_saver=model_saver, latest_prefix="mlp_")
 
 
 if __name__ == "__main__":

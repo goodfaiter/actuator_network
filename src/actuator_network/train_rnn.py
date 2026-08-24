@@ -89,6 +89,7 @@ def main():
         learning_rate=learning_rate,
         chunk_batch_size=chunk_batch_size,
         max_grad_norm=max_grad_norm,
+        latest_prefix="rnn_",
     )
 
 
