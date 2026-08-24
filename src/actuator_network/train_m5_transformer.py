@@ -114,11 +114,11 @@ def train_m5_transformer(
         for batch_inputs, batch_outputs in data_generator(inputs_train, outputs_train, batch_size):
             optimizer.zero_grad()
 
-            final_pred = model(batch_inputs)
-            aux_pred = model.transformer(batch_inputs)
+            pred = model(batch_inputs)  # [Batch, 1, 4]
 
-            final_loss = criterion(final_pred, batch_outputs)
-            aux_loss = criterion(aux_pred, batch_outputs)
+            # Channel 0 is the main predicted force; channel 3 is the Transformer's tau_external pred.
+            final_loss = criterion(pred[:, :, 0:1], batch_outputs)
+            aux_loss = criterion(pred[:, :, 3:4], batch_outputs)
             loss = final_loss + aux_weight * aux_loss
 
             loss.backward()
@@ -137,11 +137,10 @@ def train_m5_transformer(
         # Validation phase
         model.eval()
         with torch.no_grad():
-            final_val_pred = model(inputs_val)
-            aux_val_pred = model.transformer(inputs_val)
+            val_pred = model(inputs_val)  # [Batch, 1, 4]
 
-            val_final_loss = criterion(final_val_pred, outputs_val).item()
-            val_aux_loss = criterion(aux_val_pred, outputs_val).item()
+            val_final_loss = criterion(val_pred[:, :, 0:1], outputs_val).item()
+            val_aux_loss = criterion(val_pred[:, :, 3:4], outputs_val).item()
             val_loss = val_final_loss + aux_weight * val_aux_loss
 
         print(
@@ -187,7 +186,13 @@ def main():
     history_size = 150
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     input_cols = ["delta_position_rad_data", "measured_velocity_rad_per_sec_data"]
-    output_cols = ["tendon_bota_force_newton_data"]
+    output_cols = ["tendon_bota_force_newton_data"]  # Only the target exists in the training data.
+    model_output_cols = [
+        "tendon_bota_force_newton_data",
+        "tau_motor_newton_data",
+        "tau_friction_newton_data",
+        "tau_external_pred_newton_data",
+    ]
     mcap_file_paths = [
         "/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_03_30_0.mcap",  # finger, mixed 200Hz
         "/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_52_16_0.mcap",  # finger, mixed 200Hz
@@ -268,7 +273,7 @@ def main():
         stride=stride,
         prediction=prediction,
         input_columns=input_cols,
-        output_columns=output_cols,
+        output_columns=model_output_cols,
     )
     model_saver = ModelSaver(wrapped_model, OUTPUT_DIR)
     train_m5_transformer(

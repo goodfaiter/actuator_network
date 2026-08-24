@@ -63,15 +63,15 @@ def _initial_motor_gain(combined: M5TransformerPhysicsModel) -> float:
 
 
 def test_m5_transformer_physics_forward_shape():
-    """The combined model should return [Batch, 1, Output Dim]."""
+    """The combined model should return [Batch, 1, 4] physics channels."""
     model = _make_model()
     x = torch.randn(4, 8, 2)
     out = model(x)
-    assert out.shape == (4, 1, 1)
+    assert out.shape == (4, 1, 4)
 
 
 def test_m5_transformer_physics_computes_tau_external():
-    """With a deterministic M5 (constant friction), output equals tau_motor - tau_friction."""
+    """With a deterministic M5 (constant friction), channel 0 equals tau_motor - tau_friction."""
     m5 = M5FrictionModel()
     # Make M5 return a constant friction of 0.5
     with torch.no_grad():
@@ -125,8 +125,8 @@ def test_m5_transformer_physics_computes_tau_external():
     with torch.no_grad():
         out = model(x)
 
-    assert out.shape == (batch, 1, 1)
-    assert torch.allclose(out.squeeze(), expected_norm, atol=1e-6)
+    assert out.shape == (batch, 1, 4)
+    assert torch.allclose(out[:, 0, 0], expected_norm, atol=1e-6)
 
 
 def test_m5_transformer_physics_gradients_flow_to_transformer():
@@ -138,7 +138,7 @@ def test_m5_transformer_physics_gradients_flow_to_transformer():
     target = torch.randn(4, 1, 1)
 
     out = model(x)
-    loss = torch.nn.functional.mse_loss(out, target)
+    loss = torch.nn.functional.mse_loss(out[:, :, 0:1], target)
     loss.backward()
 
     transformer_params = list(model.transformer.parameters())
@@ -153,22 +153,16 @@ def test_load_m5_model_respects_trainable_flag():
         with open(params_path, "w") as f:
             json.dump(params, f)
 
-        fully_frozen = load_m5_model(
-            params_path, torch.device("cpu"), trainable=False, motor_gain_trainable=False
-        )
+        fully_frozen = load_m5_model(params_path, torch.device("cpu"), trainable=False, motor_gain_trainable=False)
         assert not any(p.requires_grad for p in fully_frozen.parameters())
         loaded_frozen = fully_frozen.named_physical_parameters()
         for key, value in params.items():
             assert loaded_frozen[key] == pytest.approx(value, abs=1e-5)
 
-        fully_trainable = load_m5_model(
-            params_path, torch.device("cpu"), trainable=True, motor_gain_trainable=True
-        )
+        fully_trainable = load_m5_model(params_path, torch.device("cpu"), trainable=True, motor_gain_trainable=True)
         assert all(p.requires_grad for p in fully_trainable.parameters())
 
-        friction_only = load_m5_model(
-            params_path, torch.device("cpu"), trainable=True, motor_gain_trainable=False
-        )
+        friction_only = load_m5_model(params_path, torch.device("cpu"), trainable=True, motor_gain_trainable=False)
         assert friction_only.Kv.requires_grad
         assert not friction_only.motor_gain_log.requires_grad
 
@@ -211,7 +205,12 @@ def _make_small_combined_model(params_path: str, device: torch.device, trainable
         stride=1,
         prediction=False,
         input_columns=["delta_position_rad_data", "measured_velocity_rad_per_sec_data"],
-        output_columns=["tendon_bota_force_newton_data"],
+        output_columns=[
+            "tendon_bota_force_newton_data",
+            "tau_motor_newton_data",
+            "tau_friction_newton_data",
+            "tau_external_pred_newton_data",
+        ],
     )
     return combined, wrapped
 
