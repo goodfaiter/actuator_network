@@ -91,7 +91,7 @@ def train_m5_transformer(
             "train_ratio": train_ratio,
             "aux_weight": aux_weight,
             "max_grad_norm": max_grad_norm,
-            "m5_trainable": model.m5.Kv.requires_grad,
+            "m5_trainable": model.m5.K_v_log.requires_grad,
             "motor_gain_trainable": model.m5.motor_gain_log.requires_grad,
         }
     )

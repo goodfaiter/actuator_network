@@ -8,14 +8,14 @@ import torch.nn.functional as functional
 class M5FrictionModel(nn.Module):
     """M5 friction model.
 
-    tau_friction = Kv * velocity
-                 + Kc
-                 + |Km * tau_motor - Ke * tau_external|
+    tau_friction = K_v * velocity
+                 + K_c
+                 + |K_m * tau_motor - K_e * tau_external|
                  + exp(-|velocity / V_s|^alpha)
-                   * (Kcs + |K_ms * tau_motor - Kes * tau_external|)
+                   * (K_cs + |K_ms * tau_motor - K_es * tau_external|)
 
-    V_s and alpha are constrained positive via softplus. The motor gain P that
-    maps delta_position to tau_motor can optionally be learned jointly.
+    All ``K`` coefficients, ``V_s``, ``alpha`` and the motor gain ``P`` are
+    constrained positive via softplus.
     """
 
     def __init__(
@@ -24,15 +24,15 @@ class M5FrictionModel(nn.Module):
         trainable_motor_gain: bool = False,
     ) -> None:
         super().__init__()
-        self.Kv = nn.Parameter(torch.tensor(0.01))
-        self.Kc = nn.Parameter(torch.tensor(0.0))
-        self.Km = nn.Parameter(torch.tensor(1.0))
-        self.Ke = nn.Parameter(torch.tensor(1.0))
+        self.K_v_log = nn.Parameter(self._inverse_softplus(torch.tensor(0.01)))
+        self.K_c_log = nn.Parameter(self._inverse_softplus(torch.tensor(0.01)))
+        self.K_m_log = nn.Parameter(self._inverse_softplus(torch.tensor(1.0)))
+        self.K_e_log = nn.Parameter(self._inverse_softplus(torch.tensor(1.0)))
         self.V_s_log = nn.Parameter(torch.tensor(0.0))
         self.alpha_log = nn.Parameter(torch.tensor(0.0))
-        self.Kcs = nn.Parameter(torch.tensor(0.0))
-        self.K_ms = nn.Parameter(torch.tensor(1.0))
-        self.Kes = nn.Parameter(torch.tensor(1.0))
+        self.K_cs_log = nn.Parameter(self._inverse_softplus(torch.tensor(0.01)))
+        self.K_ms_log = nn.Parameter(self._inverse_softplus(torch.tensor(1.0)))
+        self.K_es_log = nn.Parameter(self._inverse_softplus(torch.tensor(1.0)))
 
         # Motor gain P in tau_motor = P * delta_position. Kept positive via softplus.
         self.motor_gain_log = nn.Parameter(self._inverse_softplus(torch.tensor(motor_gain)))
@@ -63,23 +63,33 @@ class M5FrictionModel(nn.Module):
         set ``self.motor_gain_log.requires_grad`` directly.
         """
         friction_params = [
-            self.Kv,
-            self.Kc,
-            self.Km,
-            self.Ke,
+            self.K_v_log,
+            self.K_c_log,
+            self.K_m_log,
+            self.K_e_log,
             self.V_s_log,
             self.alpha_log,
-            self.Kcs,
-            self.K_ms,
-            self.Kes,
+            self.K_cs_log,
+            self.K_ms_log,
+            self.K_es_log,
         ]
         for param in friction_params:
             param.requires_grad = trainable
 
-    def _positive_params(self) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return constrained-positive parameters."""
+    def _constrained_params(self):
+        """Return all constrained-positive friction parameters."""
         eps = 1e-6
-        return functional.softplus(self.V_s_log) + eps, functional.softplus(self.alpha_log) + eps
+        return (
+            functional.softplus(self.K_v_log),
+            functional.softplus(self.K_c_log),
+            functional.softplus(self.K_m_log),
+            functional.softplus(self.K_e_log),
+            functional.softplus(self.V_s_log) + eps,
+            functional.softplus(self.alpha_log) + eps,
+            functional.softplus(self.K_cs_log),
+            functional.softplus(self.K_ms_log),
+            functional.softplus(self.K_es_log),
+        )
 
     def forward(
         self,
@@ -87,43 +97,51 @@ class M5FrictionModel(nn.Module):
         tau_motor: torch.Tensor,
         tau_external: torch.Tensor,
     ) -> torch.Tensor:
-        v_s, alpha = self._positive_params()
+        k_v, k_c, k_m, k_e, v_s, alpha, k_cs, k_ms, k_es = self._constrained_params()
 
-        static_part = self.Kv * velocity + self.Kc + torch.abs(self.Km * tau_motor - self.Ke * tau_external)
+        static_part = k_v * velocity + k_c + torch.abs(k_m * tau_motor - k_e * tau_external)
 
         stribeck_envelope = torch.exp(-(torch.abs(velocity / v_s).clamp_min(1e-8) ** alpha))
-        stribeck_part = stribeck_envelope * (self.Kcs + torch.abs(self.K_ms * tau_motor - self.Kes * tau_external))
+        stribeck_part = stribeck_envelope * (k_cs + torch.abs(k_ms * tau_motor - k_es * tau_external))
 
         return static_part + stribeck_part
 
     def named_physical_parameters(self) -> dict[str, float]:
         """Return the current parameter values as a plain dict."""
-        v_s, alpha = self._positive_params()
+        k_v, k_c, k_m, k_e, v_s, alpha, k_cs, k_ms, k_es = self._constrained_params()
         return {
-            "Kv": float(self.Kv.item()),
-            "Kc": float(self.Kc.item()),
-            "Km": float(self.Km.item()),
-            "Ke": float(self.Ke.item()),
+            "K_v": float(k_v.item()),
+            "K_c": float(k_c.item()),
+            "K_m": float(k_m.item()),
+            "K_e": float(k_e.item()),
             "V_s": float(v_s.item()),
             "alpha": float(alpha.item()),
-            "Kcs": float(self.Kcs.item()),
-            "K_ms": float(self.K_ms.item()),
-            "Kes": float(self.Kes.item()),
+            "K_cs": float(k_cs.item()),
+            "K_ms": float(k_ms.item()),
+            "K_es": float(k_es.item()),
             "motor_gain": float(self._motor_gain().item()),
         }
 
     def set_physical_parameters(self, params: dict[str, float]) -> None:
-        """Set model parameters from a dict of physical (unconstrained) values."""
+        """Set model parameters from a dict of physical (positive) values."""
         eps = 1e-6
+
+        def _get(key: str, old_key: str) -> float:
+            if key in params:
+                return params[key]
+            if old_key in params:
+                return params[old_key]
+            raise KeyError(f"Missing parameter '{key}'")
+
         with torch.no_grad():
-            self.Kv.fill_(params["Kv"])
-            self.Kc.fill_(params["Kc"])
-            self.Km.fill_(params["Km"])
-            self.Ke.fill_(params["Ke"])
-            self.V_s_log.fill_(torch.log(torch.exp(torch.tensor(params["V_s"] - eps)) - 1).item())
-            self.alpha_log.fill_(torch.log(torch.exp(torch.tensor(params["alpha"] - eps)) - 1).item())
-            self.Kcs.fill_(params["Kcs"])
-            self.K_ms.fill_(params["K_ms"])
-            self.Kes.fill_(params["Kes"])
+            self.K_v_log.fill_(self._inverse_softplus(torch.tensor(_get("K_v", "Kv"))).item())
+            self.K_c_log.fill_(self._inverse_softplus(torch.tensor(_get("K_c", "Kc"))).item())
+            self.K_m_log.fill_(self._inverse_softplus(torch.tensor(_get("K_m", "Km"))).item())
+            self.K_e_log.fill_(self._inverse_softplus(torch.tensor(_get("K_e", "Ke"))).item())
+            self.K_cs_log.fill_(self._inverse_softplus(torch.tensor(_get("K_cs", "Kcs"))).item())
+            self.K_ms_log.fill_(self._inverse_softplus(torch.tensor(_get("K_ms", "K_ms"))).item())
+            self.K_es_log.fill_(self._inverse_softplus(torch.tensor(_get("K_es", "Kes"))).item())
+            self.V_s_log.fill_(torch.log(torch.exp(torch.tensor(_get("V_s", "V_s") - eps)) - 1).item())
+            self.alpha_log.fill_(torch.log(torch.exp(torch.tensor(_get("alpha", "alpha") - eps)) - 1).item())
             if "motor_gain" in params:
                 self.motor_gain_log.fill_(self._inverse_softplus(torch.tensor(params["motor_gain"])).item())

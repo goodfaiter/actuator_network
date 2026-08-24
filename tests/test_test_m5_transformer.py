@@ -14,15 +14,15 @@ TEST_MCAP = "/workspace/tests/test.mcap"
 def _dummy_m5_params() -> dict[str, float]:
     """Return deterministic physical parameters for smoke testing."""
     return {
-        "Kv": 0.1,
-        "Kc": 0.2,
-        "Km": 0.3,
-        "Ke": 0.4,
+        "K_v": 0.1,
+        "K_c": 0.2,
+        "K_m": 0.3,
+        "K_e": 0.4,
         "V_s": 0.5,
         "alpha": 1.0,
-        "Kcs": 0.6,
+        "K_cs": 0.6,
         "K_ms": 0.7,
-        "Kes": 0.8,
+        "K_es": 0.8,
     }
 
 

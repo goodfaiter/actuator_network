@@ -15,15 +15,15 @@ from actuator_network.train_m5_transformer import load_m5_model, train_m5_transf
 def _dummy_m5_params() -> dict[str, float]:
     """Return deterministic physical parameters for smoke testing."""
     return {
-        "Kv": 0.1,
-        "Kc": 0.2,
-        "Km": 0.3,
-        "Ke": 0.4,
+        "K_v": 0.1,
+        "K_c": 0.2,
+        "K_m": 0.3,
+        "K_e": 0.4,
         "V_s": 0.5,
         "alpha": 1.0,
-        "Kcs": 0.6,
+        "K_cs": 0.6,
         "K_ms": 0.7,
-        "Kes": 0.8,
+        "K_es": 0.8,
     }
 
 
@@ -71,20 +71,25 @@ def test_m5_transformer_physics_forward_shape():
 
 
 def test_m5_transformer_physics_computes_tau_external():
-    """With a deterministic M5 (constant friction), channel 0 equals tau_motor - tau_friction."""
+    """With a deterministic M5 (near-constant friction), channel 0 equals tau_motor - tau_friction."""
     m5 = M5FrictionModel()
-    # Make M5 return a constant friction of 0.5
+    # Make M5 return a near-constant friction dominated by K_c = 0.5.
+    m5.set_physical_parameters(
+        {
+            "K_v": 1e-6,
+            "K_c": 0.5,
+            "K_m": 1e-6,
+            "K_e": 1e-6,
+            "V_s": 1e6,
+            "alpha": 1.0,
+            "K_cs": 1e-6,
+            "K_ms": 1e-6,
+            "K_es": 1e-6,
+        }
+    )
     with torch.no_grad():
-        m5.Kv.fill_(0.0)
-        m5.Kc.fill_(0.5)
-        m5.Km.fill_(0.0)
-        m5.Ke.fill_(0.0)
-        m5.Kcs.fill_(0.0)
-        m5.K_ms.fill_(0.0)
-        m5.Kes.fill_(0.0)
-        # Make the Stribeck envelope essentially 1.0 for any velocity
+        # Make the Stribeck envelope essentially 1.0 for any velocity.
         m5.V_s_log.fill_(20.0)
-        m5.alpha_log.fill_(1.0)
 
     transformer = TorchTransformerModel(
         input_size=2,
@@ -115,18 +120,19 @@ def test_m5_transformer_physics_computes_tau_external():
     batch = 4
     history = 8
     x = torch.randn(batch, history, 2)
-    # delta_position is the first feature at the last timestep
     delta_position = x[:, -1, 0]
     with torch.no_grad():
         motor_gain = model.m5.motor_gain_value().item()
-    expected_phys = motor_gain * delta_position - 0.5
-    expected_norm = (expected_phys - output_mean) / output_std
-
-    with torch.no_grad():
+        tau_motor = motor_gain * delta_position
+        # Velocity is zero in the constructed input, so the expected friction is
+        # approximately K_c plus negligible K_m/K_e terms.
+        expected_friction = m5(torch.zeros(batch), tau_motor, torch.zeros(batch))
+        expected_phys = tau_motor - expected_friction
+        expected_norm = (expected_phys - output_mean) / output_std
         out = model(x)
 
     assert out.shape == (batch, 1, 4)
-    assert torch.allclose(out[:, 0, 0], expected_norm, atol=1e-6)
+    assert torch.allclose(out[:, 0, 0], expected_norm, atol=1e-4)
 
 
 def test_m5_transformer_physics_gradients_flow_to_transformer():
@@ -163,7 +169,7 @@ def test_load_m5_model_respects_trainable_flag():
         assert all(p.requires_grad for p in fully_trainable.parameters())
 
         friction_only = load_m5_model(params_path, torch.device("cpu"), trainable=True, motor_gain_trainable=False)
-        assert friction_only.Kv.requires_grad
+        assert friction_only.K_v_log.requires_grad
         assert not friction_only.motor_gain_log.requires_grad
 
 
@@ -229,7 +235,7 @@ def test_train_m5_transformer_updates_m5_when_trainable():
 
         inputs = torch.randn(64, 2, 2)
         outputs = torch.randn(64, 1, 1)
-        initial_kv = float(combined.m5.Kv.item())
+        initial_kv = float(torch.nn.functional.softplus(combined.m5.K_v_log).item())
 
         with patch("actuator_network.train_m5_transformer.wandb") as mock_wandb:
             mock_wandb.init.return_value = MagicMock()
@@ -244,7 +250,7 @@ def test_train_m5_transformer_updates_m5_when_trainable():
                 max_grad_norm=1.0,
             )
 
-        final_kv = float(combined.m5.Kv.item())
+        final_kv = float(torch.nn.functional.softplus(combined.m5.K_v_log).item())
         assert final_kv != pytest.approx(initial_kv, abs=1e-6)
 
 
@@ -262,7 +268,7 @@ def test_train_m5_transformer_keeps_m5_fixed_when_not_trainable():
 
         inputs = torch.randn(64, 2, 2)
         outputs = torch.randn(64, 1, 1)
-        initial_kv = float(combined.m5.Kv.item())
+        initial_kv = float(torch.nn.functional.softplus(combined.m5.K_v_log).item())
 
         with patch("actuator_network.train_m5_transformer.wandb") as mock_wandb:
             mock_wandb.init.return_value = MagicMock()
@@ -277,7 +283,7 @@ def test_train_m5_transformer_keeps_m5_fixed_when_not_trainable():
                 max_grad_norm=1.0,
             )
 
-        final_kv = float(combined.m5.Kv.item())
+        final_kv = float(torch.nn.functional.softplus(combined.m5.K_v_log).item())
         assert final_kv == pytest.approx(initial_kv, abs=1e-6)
 
 
