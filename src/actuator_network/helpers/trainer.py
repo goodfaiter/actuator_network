@@ -46,7 +46,7 @@ def data_generator(inputs, outputs, batch_size):
         yield inputs[batch_indices], outputs[batch_indices]
 
 
-def train(model, inputs, outputs, model_saver: ModelSaver = None):
+def train(model, inputs, outputs, model_saver: ModelSaver = None, latest_prefix: str = ""):
     """Train the model with validation and model checkpointing
 
     Args:
@@ -54,6 +54,7 @@ def train(model, inputs, outputs, model_saver: ModelSaver = None):
         inputs: Input tensor
         outputs: Output tensor
         model_saver: ModelSaver instance for saving
+        latest_prefix: Optional prefix inserted before "best_"/"final_" for latest checkpoint names.
     """
     num_epochs = 50
     learning_rate = 0.001
@@ -118,11 +119,11 @@ def train(model, inputs, outputs, model_saver: ModelSaver = None):
         if val_loss.item() < best_val_loss:
             best_val_loss = val_loss.item()
             model_saver.save_model("_best")
-            model_saver.save_latest("best_")
+            model_saver.save_latest(f"best_{latest_prefix}")
             print(f"New best model! Val loss: {best_val_loss:.4f}")
 
     model_saver.save_model("_final")
-    model_saver.save_latest("final_")
+    model_saver.save_latest(f"final_{latest_prefix}")
     # Clean up wandb
     wandb.finish()
 
@@ -138,6 +139,7 @@ def train_stateful(
     learning_rate: float = 0.001,
     chunk_batch_size: int = 4,
     max_grad_norm: float = 1.0,
+    latest_prefix: str = "",
 ):
     """Train a recurrent model statefully with truncated backpropagation through time.
 
@@ -246,9 +248,9 @@ def train_stateful(
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             model_saver.save_model("_best")
-            model_saver.save_latest("best_")
+            model_saver.save_latest(f"best_{latest_prefix}")
             print(f"New best model! Val loss: {best_val_loss:.4f}")
 
     model_saver.save_model("_final")
-    model_saver.save_latest("final_")
+    model_saver.save_latest(f"final_{latest_prefix}")
     wandb.finish()

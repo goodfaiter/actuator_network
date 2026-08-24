@@ -28,10 +28,7 @@ def prepare_tensors_from_dataframes(
 
     # Drop NaN/Inf rows
     valid_mask = (
-        torch.isfinite(velocity)
-        & torch.isfinite(tau_motor)
-        & torch.isfinite(tau_external)
-        & torch.isfinite(target)
+        torch.isfinite(velocity) & torch.isfinite(tau_motor) & torch.isfinite(tau_external) & torch.isfinite(target)
     )
     velocity = velocity[valid_mask]
     tau_motor = tau_motor[valid_mask]
@@ -65,9 +62,7 @@ def main():
 
     model = M5FrictionModel().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=patience // 4
-    )
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=patience // 4)
 
     best_loss = float("inf")
     epochs_without_improvement = 0
@@ -100,7 +95,7 @@ def main():
     for name, value in params.items():
         print(f"  {name} = {value:.6f}")
     print(f"\nFinal MSE loss: {best_loss:.6f}")
-    print(f"Final RMSE:     {best_loss ** 0.5:.6f}")
+    print(f"Final RMSE:     {best_loss**0.5:.6f}")
 
     # Save results
     model_path = os.path.join(output_dir, "m5_friction_model.pt")

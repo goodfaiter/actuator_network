@@ -42,18 +42,10 @@ class M5FrictionModel(nn.Module):
     ) -> torch.Tensor:
         v_s, alpha = self._positive_params()
 
-        static_part = (
-            self.Kv * velocity
-            + self.Kc
-            + torch.abs(self.Km * tau_motor - self.Ke * tau_external)
-        )
+        static_part = self.Kv * velocity + self.Kc + torch.abs(self.Km * tau_motor - self.Ke * tau_external)
 
-        stribeck_envelope = torch.exp(
-            -torch.abs(velocity / v_s).clamp_min(1e-8) ** alpha
-        )
-        stribeck_part = stribeck_envelope * (
-            self.Kcs + torch.abs(self.K_ms * tau_motor - self.Kes * tau_external)
-        )
+        stribeck_envelope = torch.exp(-(torch.abs(velocity / v_s).clamp_min(1e-8) ** alpha))
+        stribeck_part = stribeck_envelope * (self.Kcs + torch.abs(self.K_ms * tau_motor - self.Kes * tau_external))
 
         return static_part + stribeck_part
 

@@ -11,6 +11,7 @@ Supported model families:
 - MLP (`TorchMlpModel`)
 - RNN (`TorchRNNModel`)
 - Transformer (`TorchTransformerModel`)
+- M5 + Transformer physics-coupled model (`M5TransformerPhysicsModel`)
 
 The trained model is wrapped in `ScaledModelWrapper`, which includes input/output normalization, and exported as TorchScript for deployment.
 
@@ -30,13 +31,17 @@ The trained model is wrapped in `ScaledModelWrapper`, which includes input/outpu
 │   ├── train_mlp.py                    # Entry point: train MLP
 │   ├── train_rnn.py                    # Entry point: train RNN
 │   ├── train_transformer.py            # Entry point: train Transformer
-│   ├── test.py                         # Entry point: run inference on test MCAPs
+│   ├── train_m5.py                     # Entry point: fit M5 friction model
+│   ├── train_m5_transformer.py         # Entry point: train M5 + Transformer physics-coupled model
+│   ├── test_transformer.py             # Entry point: run Transformer inference on test MCAPs
+│   ├── test_m5.py                      # Entry point: run M5 inference on test MCAPs
+│   ├── test_m5_transformer.py          # Entry point: run M5 + Transformer inference on test MCAPs
 │   ├── helpers/
 │   │   ├── mcap_to_pandas.py           # Read ROS2 MCAP → pandas DataFrame
 │   │   ├── pandas_processing.py        # Resample, derive load, filter, derivative
 │   │   ├── pandas_to_torch.py          # Build history windows / sequences, normalize
 │   │   ├── pandas_to_mcap.py           # Write DataFrame columns back to MCAP
-│   │   ├── torch_model.py              # MLP, RNN, Transformer definitions
+│   │   ├── torch_model.py              # MLP, RNN, Transformer, M5+Transformer definitions
 │   │   ├── trainer.py                  # Custom training loop with W&B logging
 │   │   └── wrapper.py                  # ScaledModelWrapper + ModelSaver + TorchScript export
 │   └── plots/                          # Matplotlib scripts for paper figures
@@ -75,6 +80,13 @@ uv run predict
 - `train-mlp`
 - `train-rnn`
 - `train-transformer`
+- `train-m5`
+- `train-m5-transformer`
+- `test-mlp`
+- `test-rnn`
+- `test-transformer`
+- `test-m5`
+- `test-m5-transformer`
 - `predict`
 
 Run them with `uv run <script>`.
@@ -123,13 +135,15 @@ uv run train-transformer
 Each training script:
 
 1. Reads every MCAP in its hardcoded list.
-2. Resamples to the configured frequency (usually 80 Hz).
+2. Resamples to the configured frequency (usually 80 or 200 Hz).
 3. Computes derived columns (velocity, acceleration, dynamic force, load).
 4. Writes a `_processed.mcap` next to each input file.
 5. Builds history windows / sequences.
 6. Normalizes inputs and outputs.
 7. Trains with a 90/10 train/val split, MSE loss, Adam optimizer, and logs to Weights & Biases.
 8. Saves the best, final, and periodic checkpoints as TorchScript `.pt` files in `data/output_data/`.
+
+The `train_m5_transformer.py` script additionally loads a pre-fit M5 friction model from `data/output_data/m5_friction_params.json`, freezes it, and trains a Transformer so that the final output is `tau_external_calculated = tau_motor - tau_friction(tau_external_predicted)`.
 
 Key configuration knobs in the training scripts:
 
@@ -169,7 +183,7 @@ uv run python plot_rmse.py
 
 ## Known issues and gotchas
 
-1. **Training scripts are hardcoded experiment notebooks.** Paths, model configs, and input/output columns are defined inside `train_mlp.py`, `train_rnn.py`, and `train_transformer.py`. They work as `uv run train-*` entry points but are not a generic CLI yet.
+1. **Training scripts are hardcoded experiment notebooks.** Paths, model configs, and input/output columns are defined inside `train_mlp.py`, `train_rnn.py`, `train_transformer.py`, and `train_m5_transformer.py`. They work as `uv run train-*` entry points but are not a generic CLI yet.
 
 2. **`process_inputs_time_series` zero-padding.** When the sequence start is before index `0`, the remaining entries are left as zeros. Make sure this behavior is intentional for your windowing strategy.
 
@@ -195,10 +209,13 @@ uv run train-mlp
 uv run train-rnn
 uv run train-transformer
 uv run train-m5
+uv run train-m5-transformer
 
 # Inference
 uv run predict
 uv run test-m5
+uv run test-transformer
+uv run test-m5-transformer
 
 # Plots
 cd src/actuator_network/plots
