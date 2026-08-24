@@ -14,10 +14,15 @@ class M5FrictionModel(nn.Module):
                  + exp(-|velocity / V_s|^alpha)
                    * (Kcs + |K_ms * tau_motor - Kes * tau_external|)
 
-    V_s and alpha are constrained positive via softplus.
+    V_s and alpha are constrained positive via softplus. The motor gain P that
+    maps delta_position to tau_motor can optionally be learned jointly.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        motor_gain: float = 4.2,
+        trainable_motor_gain: bool = False,
+    ) -> None:
         super().__init__()
         self.Kv = nn.Parameter(torch.tensor(0.01))
         self.Kc = nn.Parameter(torch.tensor(0.0))
@@ -28,6 +33,48 @@ class M5FrictionModel(nn.Module):
         self.Kcs = nn.Parameter(torch.tensor(0.0))
         self.K_ms = nn.Parameter(torch.tensor(1.0))
         self.Kes = nn.Parameter(torch.tensor(1.0))
+
+        # Motor gain P in tau_motor = P * delta_position. Kept positive via softplus.
+        self.motor_gain_log = nn.Parameter(self._inverse_softplus(torch.tensor(motor_gain)))
+        self.motor_gain_log.requires_grad = trainable_motor_gain
+
+    @staticmethod
+    def _inverse_softplus(x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+        """Inverse of y = softplus(x), stabilized for small values."""
+        return torch.log(torch.exp(x) - 1 + eps)
+
+    def _motor_gain(self) -> torch.Tensor:
+        """Return the constrained-positive motor gain."""
+        eps = 1e-6
+        return functional.softplus(self.motor_gain_log) + eps
+
+    def motor_gain_value(self) -> torch.Tensor:
+        """Public accessor for the current motor gain (useful for logging/saving)."""
+        return self._motor_gain()
+
+    def compute_tau_motor(self, delta_position: torch.Tensor) -> torch.Tensor:
+        """Compute motor torque from position error using the learned/fixed gain."""
+        return self._motor_gain() * delta_position
+
+    def set_friction_trainable(self, trainable: bool) -> None:
+        """Enable or disable gradients on all friction parameters.
+
+        The motor gain is not affected; use ``trainable_motor_gain`` at init or
+        set ``self.motor_gain_log.requires_grad`` directly.
+        """
+        friction_params = [
+            self.Kv,
+            self.Kc,
+            self.Km,
+            self.Ke,
+            self.V_s_log,
+            self.alpha_log,
+            self.Kcs,
+            self.K_ms,
+            self.Kes,
+        ]
+        for param in friction_params:
+            param.requires_grad = trainable
 
     def _positive_params(self) -> tuple[torch.Tensor, torch.Tensor]:
         """Return constrained-positive parameters."""
@@ -62,6 +109,7 @@ class M5FrictionModel(nn.Module):
             "Kcs": float(self.Kcs.item()),
             "K_ms": float(self.K_ms.item()),
             "Kes": float(self.Kes.item()),
+            "motor_gain": float(self._motor_gain().item()),
         }
 
     def set_physical_parameters(self, params: dict[str, float]) -> None:
@@ -77,3 +125,5 @@ class M5FrictionModel(nn.Module):
             self.Kcs.fill_(params["Kcs"])
             self.K_ms.fill_(params["K_ms"])
             self.Kes.fill_(params["Kes"])
+            if "motor_gain" in params:
+                self.motor_gain_log.fill_(self._inverse_softplus(torch.tensor(params["motor_gain"])).item())

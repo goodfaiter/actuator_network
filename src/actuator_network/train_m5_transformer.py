@@ -22,14 +22,15 @@ def load_m5_model(
     params_path: str,
     device: torch.device,
     trainable: bool = False,
+    motor_gain_trainable: bool = True,
 ) -> M5FrictionModel:
     """Load an M5 friction model from JSON parameters.
 
     Args:
         params_path: Path to the JSON file written by train_m5.py.
         device: Torch device to place the model on.
-        trainable: If True, keep the model in train mode with gradients enabled.
-            If False, freeze the model and use it as a fixed physics prior.
+        trainable: If True, enable gradients on the M5 friction parameters.
+        motor_gain_trainable: If True, enable gradients on the motor gain P.
 
     Returns:
         M5FrictionModel initialized from JSON.
@@ -42,14 +43,14 @@ def load_m5_model(
     with open(params_path) as f:
         params = json.load(f)
 
-    model = M5FrictionModel().to(device)
+    motor_gain = params.get("motor_gain", MOTOR_GAIN)
+    model = M5FrictionModel(motor_gain=motor_gain, trainable_motor_gain=motor_gain_trainable).to(device)
     model.set_physical_parameters(params)
-    if trainable:
+    model.set_friction_trainable(trainable)
+    if trainable or motor_gain_trainable:
         model.train()
-        model.requires_grad_(True)
     else:
         model.eval()
-        model.requires_grad_(False)
     return model
 
 
@@ -90,6 +91,8 @@ def train_m5_transformer(
             "train_ratio": train_ratio,
             "aux_weight": aux_weight,
             "max_grad_norm": max_grad_norm,
+            "m5_trainable": model.m5.Kv.requires_grad,
+            "motor_gain_trainable": model.m5.motor_gain_log.requires_grad,
         }
     )
     wandb.log({"Model": str(model)})
@@ -195,8 +198,9 @@ def main():
     ]
 
     # Training knobs
-    m5_trainable = True  # If False, M5 acts as a fixed physics prior.
-    aux_weight = 0.1
+    m5_trainable = False  # If False, M5 friction params stay frozen.
+    motor_gain_trainable = False  # If False, motor gain P stays fixed.
+    aux_weight = 0.0
     max_grad_norm = 1.0
     num_epochs = 50
     learning_rate = 0.001
@@ -204,8 +208,14 @@ def main():
     train_ratio = 0.9
 
     print("Loading M5 friction model as initial guess...")
-    m5_model = load_m5_model(M5_PARAMS_PATH, device, trainable=m5_trainable)
-    print(f"  M5 trainable: {m5_trainable}")
+    m5_model = load_m5_model(
+        M5_PARAMS_PATH,
+        device,
+        trainable=m5_trainable,
+        motor_gain_trainable=motor_gain_trainable,
+    )
+    print(f"  M5 friction params trainable: {m5_trainable}")
+    print(f"  Motor gain trainable: {motor_gain_trainable}")
 
     print("Loading and processing MCAP files...")
     all_inputs, all_outputs = load_mcap_files_parallel(
@@ -245,7 +255,6 @@ def main():
         output_std=outputs_std,
         delta_position_idx=delta_position_idx,
         velocity_idx=velocity_idx,
-        motor_gain=MOTOR_GAIN,
     )
 
     wrapped_model = ScaledModelWrapper(
@@ -282,6 +291,7 @@ def main():
     with open(params_path, "w") as f:
         json.dump(joint_params, f, indent=2)
     print(f"Saved joint M5 parameters to {params_path}")
+    print(f"  motor_gain = {joint_params['motor_gain']:.6f}")
 
 
 if __name__ == "__main__":

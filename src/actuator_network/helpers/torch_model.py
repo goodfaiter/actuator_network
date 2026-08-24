@@ -139,7 +139,6 @@ class M5TransformerPhysicsModel(torch.nn.Module):
         output_std: torch.Tensor,
         delta_position_idx: int,
         velocity_idx: int,
-        motor_gain: float = 4.2,
     ) -> None:
         super().__init__()
         self.m5 = m5
@@ -151,7 +150,6 @@ class M5TransformerPhysicsModel(torch.nn.Module):
         self.register_buffer("output_std", output_std.view(-1))
         self.delta_position_idx = delta_position_idx
         self.velocity_idx = velocity_idx
-        self.motor_gain = motor_gain
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x shape: [Batch, History, Feature Dim] (normalized by ScaledModelWrapper)
@@ -165,7 +163,7 @@ class M5TransformerPhysicsModel(torch.nn.Module):
         velocity_raw = (
             x_last[:, self.velocity_idx] * self.input_std[self.velocity_idx] + self.input_mean[self.velocity_idx]
         )
-        tau_motor = self.motor_gain * delta_position_raw
+        tau_motor = self.m5.compute_tau_motor(delta_position_raw)
 
         # Transformer predicts the normalized tau_external
         tau_external_pred_norm = self.transformer(x)  # [Batch, 1, Output Dim]
