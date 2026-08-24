@@ -11,6 +11,7 @@ Supported model families:
 - MLP (`TorchMlpModel`)
 - RNN (`TorchRNNModel`)
 - Transformer (`TorchTransformerModel`)
+- Autoregressive Transformer (`TorchTransformerModel` with force fed back as input)
 - M5 + Transformer physics-coupled model (`M5TransformerPhysicsModel`)
 - Plain M5 physics-coupled model (`PlainM5PhysicsModel`)
 
@@ -34,9 +35,11 @@ The trained model is wrapped in `ScaledModelWrapper`, which includes input/outpu
 │   ├── train_transformer.py            # Entry point: train Transformer
 │   ├── train_m5.py                     # Entry point: fit M5 friction model
 │   ├── train_m5_transformer.py         # Entry point: train M5 + Transformer physics-coupled model
+│   ├── train_transformer_autoregressive.py  # Entry point: train autoregressive Transformer
 │   ├── test_transformer.py             # Entry point: run Transformer inference on test MCAPs
 │   ├── test_m5.py                      # Entry point: run M5 inference on test MCAPs
 │   ├── test_m5_transformer.py          # Entry point: run M5 + Transformer inference on test MCAPs
+│   ├── test_transformer_autoregressive.py   # Entry point: run autoregressive Transformer inference
 │   ├── helpers/
 │   │   ├── mcap_to_pandas.py           # Read ROS2 MCAP → pandas DataFrame
 │   │   ├── pandas_processing.py        # Resample, derive load, filter, derivative
@@ -83,11 +86,13 @@ uv run predict
 - `train-transformer`
 - `train-m5`
 - `train-m5-transformer`
+- `train-transformer-autoregressive`
 - `test-mlp`
 - `test-rnn`
 - `test-transformer`
 - `test-m5`
 - `test-m5-transformer`
+- `test-transformer-autoregressive`
 - `predict`
 
 Run them with `uv run <script>`.
@@ -155,6 +160,8 @@ Both M5-based deployable models now return a 4-channel output:
 
 All four channels share the same physical unit (Newtons) and the same output normalization statistics.
 
+`train_transformer_autoregressive.py` trains a Transformer that takes `delta_position`, `measured_velocity`, and the previous timestep's `tendon_bota_force_newton_data` as input (teacher forcing). The matching `test_transformer_autoregressive.py` runs closed-loop inference, feeding the model's own predictions back as the force input.
+
 Key configuration knobs in the training scripts:
 
 - `freq` / `data_freq` — target resampling frequency in Hz.
@@ -171,6 +178,7 @@ uv run test-rnn
 uv run test-transformer
 uv run test-m5
 uv run test-m5-transformer
+uv run test-transformer-autoregressive
 ```
 
 Each `test-*.py` script loads the matching `best_<model>_latest.pt` TorchScript model (e.g., `best_transformer_latest.pt`), inspects its stored metadata (frequency, history size, stride, model type, input/output columns), builds the matching input tensor, runs the model, and writes a `<input>_<model>_predicted.mcap` with the new `*_predicted` columns.
@@ -180,6 +188,7 @@ Each `test-*.py` script loads the matching `best_<model>_latest.pt` TorchScript 
 | MLP | `best_mlp_latest.pt` | `_mlp_predicted.mcap` |
 | RNN | `best_rnn_latest.pt` | `_rnn_predicted.mcap` |
 | Transformer | `best_transformer_latest.pt` | `_transformer_predicted.mcap` |
+| Transformer (autoregressive) | `best_transformer_autoregressive_latest.pt` | `_transformer_autoregressive_predicted.mcap` |
 | M5 | `m5_friction_params.json` | `_m5_predicted.mcap` |
 | M5 + Transformer | `best_m5_transformer_latest.pt` | `_m5_transformer_predicted.mcap` |
 
