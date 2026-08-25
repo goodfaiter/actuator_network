@@ -46,7 +46,18 @@ def data_generator(inputs, outputs, batch_size):
         yield inputs[batch_indices], outputs[batch_indices]
 
 
-def train(model, inputs, outputs, model_saver: ModelSaver = None, latest_prefix: str = ""):
+def train(
+    model,
+    inputs,
+    outputs,
+    model_saver: ModelSaver = None,
+    latest_prefix: str = "",
+    loss_fn=None,
+    num_epochs: int = 50,
+    learning_rate: float = 0.001,
+    batch_size: int = 1024,
+    train_ratio: float = 0.9,
+):
     """Train the model with validation and model checkpointing
 
     Args:
@@ -55,12 +66,12 @@ def train(model, inputs, outputs, model_saver: ModelSaver = None, latest_prefix:
         outputs: Output tensor
         model_saver: ModelSaver instance for saving
         latest_prefix: Optional prefix inserted before "best_"/"final_" for latest checkpoint names.
+        loss_fn: Optional custom loss function. If None, MSE loss is used.
+        num_epochs: Number of training epochs.
+        learning_rate: Adam learning rate.
+        batch_size: Training batch size.
+        train_ratio: Fraction of data to use for training.
     """
-    num_epochs = 50
-    learning_rate = 0.001
-    batch_size = 1024
-    train_ratio = 0.9
-
     wandb.init(project="actuator_network")
     wandb.config.update(
         {"learning_rate": learning_rate, "batch_size": batch_size, "num_epochs": num_epochs, "train_ratio": train_ratio}
@@ -89,7 +100,10 @@ def train(model, inputs, outputs, model_saver: ModelSaver = None, latest_prefix:
             predictions = model(batch_inputs)
             if isinstance(predictions, tuple):
                 predictions = predictions[0]
-            loss = criterion(predictions, batch_outputs)
+            if loss_fn is not None:
+                loss = loss_fn(predictions, batch_outputs)
+            else:
+                loss = criterion(predictions, batch_outputs)
             loss.backward()
             optimizer.step()
 
@@ -104,7 +118,10 @@ def train(model, inputs, outputs, model_saver: ModelSaver = None, latest_prefix:
             val_predictions = model(inputs_val)
             if isinstance(val_predictions, tuple):
                 val_predictions = val_predictions[0]
-            val_loss = criterion(val_predictions, outputs_val)
+            if loss_fn is not None:
+                val_loss = loss_fn(val_predictions, outputs_val)
+            else:
+                val_loss = criterion(val_predictions, outputs_val)
 
         # Log metrics
         print(f"Epoch [{epoch + 1}/{num_epochs}], Train Loss: {avg_train_loss:.4f}, Val Loss: {val_loss.item():.4f}")
