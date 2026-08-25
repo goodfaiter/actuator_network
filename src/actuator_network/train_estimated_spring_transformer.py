@@ -189,6 +189,7 @@ def main():
     learning_rate = 0.001
     batch_size = 1024
     train_ratio = 0.9
+    spring_alpha = 0.05
 
     print("Loading and processing MCAP files...")
     dataframes = load_mcap_dataframes_parallel([path for path, _ in mcap_files], freq=data_freq)
@@ -253,6 +254,7 @@ def main():
         spring_input_std=spring_input_std,
         velocity_idx=INPUT_COLS.index("measured_velocity_rad_per_sec_data"),
         velocity_threshold=velocity_threshold,
+        spring_alpha=spring_alpha,
     ).to(device)
 
     # Output stats are per-channel: force uses force output stats, spring uses spring output stats.

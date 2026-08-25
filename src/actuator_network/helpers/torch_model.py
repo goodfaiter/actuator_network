@@ -264,6 +264,7 @@ class SpringTransformerForceEstimator(torch.nn.Module):
         spring_input_std: torch.Tensor,
         velocity_idx: int = 1,
         velocity_threshold: float = 0.1,
+        spring_alpha: float = 0.9,
     ) -> None:
         super().__init__()
         self.spring_transformer = spring_transformer
@@ -278,6 +279,7 @@ class SpringTransformerForceEstimator(torch.nn.Module):
         self.register_buffer("spring_input_mean", spring_input_mean.view(-1))
         self.register_buffer("spring_input_std", spring_input_std.view(-1))
         self.register_buffer("velocity_threshold", torch.tensor(velocity_threshold, dtype=torch.float32))
+        self.register_buffer("spring_alpha", torch.tensor(spring_alpha, dtype=torch.float32))
         self.velocity_idx = velocity_idx
         self.history_size = history_size
         self.hidden_dim = hidden_dim
@@ -314,16 +316,20 @@ class SpringTransformerForceEstimator(torch.nn.Module):
 
         # Run spring transformer on the normalized spring buffer.
         spring_pred_norm = self.spring_transformer(self.spring_buffer)  # [1, 1, 1]
-        self.last_spring.copy_(spring_pred_norm)
+
+        # Smooth the spring estimate with exponential moving average to discourage
+        # rapid switching between spring predictions.
+        smoothed_spring = self.spring_alpha * spring_pred_norm + (1.0 - self.spring_alpha) * self.last_spring
+        self.last_spring.copy_(smoothed_spring)
 
         # Build force transformer input: [delta_position, velocity, spring].
-        spring_channel = spring_pred_norm.expand(1, self.history_size, -1)
+        spring_channel = smoothed_spring.expand(1, self.history_size, -1)
         force_input_norm = torch.cat([x, spring_channel], dim=-1)  # [1, History, 3]
         force_pred_norm = self.force_transformer(force_input_norm)  # [1, 1, 1]
 
         # Stack force and spring predictions so the wrapper can denormalize each
         # channel with its own output statistics.
-        return torch.cat([force_pred_norm, spring_pred_norm], dim=-1)  # [1, 1, 2]
+        return torch.cat([force_pred_norm, smoothed_spring], dim=-1)  # [1, 1, 2]
 
 
 class SpringForceTrainingModel(torch.nn.Module):

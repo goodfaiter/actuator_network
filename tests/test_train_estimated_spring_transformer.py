@@ -110,6 +110,7 @@ def test_spring_transformer_force_estimator_stateful():
         spring_input_mean=spring_in_mean,
         spring_input_std=spring_in_std,
         velocity_threshold=0.1,
+        spring_alpha=1.0,
     )
     model.eval()
 
@@ -203,6 +204,7 @@ def test_wrapped_spring_transformer_force_estimator_scriptable():
         spring_input_mean=spring_in_mean,
         spring_input_std=spring_in_std,
         velocity_threshold=0.1,
+        spring_alpha=1.0,
     )
 
     combined_output_mean = torch.cat([force_out_mean, spring_out_mean], dim=-1)
@@ -233,3 +235,47 @@ def test_wrapped_spring_transformer_force_estimator_scriptable():
     scripted2 = torch.jit.script(wrapped)
     out2 = scripted2(x)
     assert torch.allclose(out, out2)
+
+
+def test_spring_transformer_force_estimator_smoothing():
+    device = torch.device("cpu")
+    history_size = 10
+
+    spring_transformer = TorchTransformerModel(
+        input_size=2,
+        output_size=1,
+        num_layers=1,
+        history_size=history_size,
+        num_heads=2,
+        hidden_dim=16,
+        device=device,
+    )
+    force_transformer = TorchTransformerModel(
+        input_size=3,
+        output_size=1,
+        num_layers=1,
+        history_size=history_size,
+        num_heads=2,
+        hidden_dim=16,
+        device=device,
+    )
+
+    in_mean, in_std = _make_dummy_stats(device, 2)
+    spring_in_mean, spring_in_std = _make_dummy_stats(device, 2)
+
+    # With alpha=0.0 the spring estimate should stay pinned to the initial zero.
+    model = SpringTransformerForceEstimator(
+        spring_transformer=spring_transformer,
+        force_transformer=force_transformer,
+        input_mean=in_mean,
+        input_std=in_std,
+        spring_input_mean=spring_in_mean,
+        spring_input_std=spring_in_std,
+        velocity_threshold=0.1,
+        spring_alpha=0.0,
+    )
+    model.eval()
+
+    static_input = torch.zeros(1, history_size, 2)
+    out = model(static_input)
+    assert torch.allclose(out[0, 0, 1], torch.tensor(0.0), atol=1e-6)
