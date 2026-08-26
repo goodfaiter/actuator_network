@@ -146,7 +146,7 @@ Each training script:
 4. Writes a `_processed.mcap` next to each input file.
 5. Builds history windows / sequences.
 6. Normalizes inputs and outputs.
-7. Trains with a 90/10 train/val split, MSE loss, Adam optimizer, and logs to Weights & Biases.
+7. Loads separate training and validation MCAP files, normalizes using training statistics only, and trains with MSE loss, Adam optimizer, and logs to Weights & Biases. A configurable `val_fraction` of the validation set is used as one fixed random subset each epoch to save time.
 8. Saves the best, final, and periodic checkpoints as TorchScript `.pt` files in `data/output_data/`.
 
 The `train_m5.py` and `train_m5_transformer.py` scripts now treat the motor gain `P` in `tau_motor = P * delta_position` as an optionally trainable parameter (positive-constrained via softplus). Set `trainable_motor_gain = True/False` in either script. All M5 friction coefficients (`K_v`, `K_c`, `K_m`, `K_e`, `K_cs`, `K_ms`, `K_es`) and the Stribeck parameters (`V_s`, `alpha`) are also positive-constrained via softplus. `train_m5_transformer.py` additionally loads a pre-fit M5 friction model from `data/output_data/m5_friction_params.json` as an initial guess, then jointly trains the Transformer and (optionally) the M5 friction parameters so that the final output is `tau_external_calculated = tau_motor - tau_friction(tau_external_predicted)`. It uses an auxiliary loss on the Transformer's `tau_external` prediction and gradient clipping, and saves the final fitted M5 parameters (including the learned motor gain) to `data/output_data/m5_joint_friction_params.json`. Set `m5_trainable = False` to keep the friction parameters frozen, and `motor_gain_trainable = False` to keep the gain frozen.

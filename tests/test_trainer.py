@@ -27,12 +27,14 @@ def test_train_default_latest_checkpoints():
     wrapped = _make_wrapped_model()
     inputs = torch.randn(64, 2)
     outputs = torch.randn(64, 1)
+    val_inputs = torch.randn(16, 2)
+    val_outputs = torch.randn(16, 1)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         with patch("actuator_network.helpers.trainer.wandb") as mock_wandb:
             mock_wandb.init.return_value = MagicMock()
             saver = ModelSaver(wrapped, tmpdir)
-            train(wrapped, inputs, outputs, model_saver=saver)
+            train(wrapped, inputs, outputs, val_inputs, val_outputs, model_saver=saver)
 
         assert os.path.isfile(os.path.join(tmpdir, "best_latest.pt"))
         assert os.path.isfile(os.path.join(tmpdir, "final_latest.pt"))
@@ -43,12 +45,50 @@ def test_train_prefixed_latest_checkpoints():
     wrapped = _make_wrapped_model()
     inputs = torch.randn(64, 2)
     outputs = torch.randn(64, 1)
+    val_inputs = torch.randn(16, 2)
+    val_outputs = torch.randn(16, 1)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         with patch("actuator_network.helpers.trainer.wandb") as mock_wandb:
             mock_wandb.init.return_value = MagicMock()
             saver = ModelSaver(wrapped, tmpdir)
-            train(wrapped, inputs, outputs, model_saver=saver, latest_prefix="m5_transformer_")
+            train(
+                wrapped,
+                inputs,
+                outputs,
+                val_inputs,
+                val_outputs,
+                model_saver=saver,
+                latest_prefix="m5_transformer_",
+            )
 
         assert os.path.isfile(os.path.join(tmpdir, "best_m5_transformer_latest.pt"))
         assert os.path.isfile(os.path.join(tmpdir, "final_m5_transformer_latest.pt"))
+
+
+def test_train_uses_fixed_val_subset():
+    """A val_fraction < 1.0 should use a fixed random subset of validation data."""
+    wrapped = _make_wrapped_model()
+    inputs = torch.randn(32, 2)
+    outputs = torch.randn(32, 1)
+    val_inputs = torch.randn(100, 2)
+    val_outputs = torch.randn(100, 1)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("actuator_network.helpers.trainer.wandb") as mock_wandb:
+            mock_wandb.init.return_value = MagicMock()
+            saver = ModelSaver(wrapped, tmpdir)
+            train(
+                wrapped,
+                inputs,
+                outputs,
+                val_inputs,
+                val_outputs,
+                model_saver=saver,
+                num_epochs=2,
+                batch_size=8,
+                val_fraction=0.25,
+            )
+
+        assert os.path.isfile(os.path.join(tmpdir, "best_latest.pt"))
+        assert os.path.isfile(os.path.join(tmpdir, "final_latest.pt"))

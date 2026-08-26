@@ -65,7 +65,7 @@ def test_train_transformer_autoregressive_smoke():
         device=device,
     )
 
-    # Normalize
+    # Normalize using training statistics.
     mean = inputs.mean(dim=[0, 1], keepdim=True)
     std = inputs.std(dim=[0, 1], keepdim=True) + 1e-8
     inputs_norm = (inputs - mean) / std
@@ -73,6 +73,13 @@ def test_train_transformer_autoregressive_smoke():
     out_mean = outputs.mean(dim=[0, 1], keepdim=True)
     out_std = outputs.std(dim=[0, 1], keepdim=True) + 1e-8
     outputs_norm = (outputs - out_mean) / out_std
+
+    # Use a small held-out slice of the same synthetic data as validation.
+    val_size = 40
+    val_inputs_norm = inputs_norm[-val_size:]
+    val_outputs_norm = outputs_norm[-val_size:]
+    inputs_norm = inputs_norm[:-val_size]
+    outputs_norm = outputs_norm[:-val_size]
 
     model = TorchTransformerModel(
         input_size=3,
@@ -120,4 +127,12 @@ def test_train_transformer_autoregressive_smoke():
 
     with patch("actuator_network.helpers.trainer.wandb") as mock_wandb:
         mock_wandb.init.return_value = MagicMock()
-        train(model, inputs_norm, outputs_norm, model_saver=saver, latest_prefix="transformer_autoregressive_")
+        train(
+            model,
+            inputs_norm,
+            outputs_norm,
+            val_inputs_norm,
+            val_outputs_norm,
+            model_saver=saver,
+            latest_prefix="transformer_autoregressive_",
+        )

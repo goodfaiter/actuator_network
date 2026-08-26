@@ -8,9 +8,9 @@ import torch
 import wandb
 from actuator_network.helpers.data_pipeline import load_mcap_files_parallel
 from actuator_network.helpers.m5_model import M5FrictionModel
-from actuator_network.helpers.pandas_to_torch import normalize_tensor
+from actuator_network.helpers.pandas_to_torch import apply_normalization, normalize_tensor
 from actuator_network.helpers.torch_model import M5TransformerPhysicsModel, TorchTransformerModel
-from actuator_network.helpers.trainer import data_generator, split_data
+from actuator_network.helpers.trainer import data_generator
 from actuator_network.helpers.wrapper import ModelSaver, ScaledModelWrapper
 
 M5_PARAMS_PATH = "/workspace/data/output_data/m5_friction_params.json"
@@ -58,6 +58,8 @@ def train_m5_transformer(
     model: M5TransformerPhysicsModel,
     inputs: torch.Tensor,
     outputs: torch.Tensor,
+    val_inputs: torch.Tensor,
+    val_outputs: torch.Tensor,
     model_saver: ModelSaver,
     latest_prefix: str = "",
     aux_weight: float = 0.1,
@@ -65,7 +67,7 @@ def train_m5_transformer(
     num_epochs: int = 50,
     learning_rate: float = 0.001,
     batch_size: int = 1024,
-    train_ratio: float = 0.9,
+    val_fraction: float = 1.0,
 ) -> None:
     """Train the combined M5 + Transformer model with an auxiliary loss and gradient clipping.
 
@@ -73,6 +75,8 @@ def train_m5_transformer(
         model: The combined M5 + Transformer model to train.
         inputs: Normalized input tensor of shape (num_samples, history_size, input_dim).
         outputs: Normalized target tensor of shape (num_samples, 1, output_dim).
+        val_inputs: Normalized validation input tensor.
+        val_outputs: Normalized validation target tensor.
         model_saver: ModelSaver instance for checkpointing.
         latest_prefix: Prefix inserted before "best_"/"final_" in latest checkpoint names.
         aux_weight: Weight for the auxiliary MSE loss on the Transformer's tau_external prediction.
@@ -80,7 +84,8 @@ def train_m5_transformer(
         num_epochs: Number of training epochs.
         learning_rate: Adam learning rate.
         batch_size: Training batch size.
-        train_ratio: Fraction of data to use for training.
+        val_fraction: Fraction of the validation set to use each epoch. The subset
+            is randomly sampled once at the start of training to save time.
     """
     wandb.init(project="actuator_network")
     wandb.config.update(
@@ -88,7 +93,7 @@ def train_m5_transformer(
             "learning_rate": learning_rate,
             "batch_size": batch_size,
             "num_epochs": num_epochs,
-            "train_ratio": train_ratio,
+            "val_fraction": val_fraction,
             "aux_weight": aux_weight,
             "max_grad_norm": max_grad_norm,
             "m5_trainable": model.m5.K_v_log.requires_grad,
@@ -97,9 +102,19 @@ def train_m5_transformer(
     )
     wandb.log({"Model": str(model)})
 
-    inputs_train, outputs_train, inputs_val, outputs_val = split_data(inputs, outputs, train_ratio=train_ratio)
     criterion = torch.nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+    # Compute a single fixed random validation subset to save time.
+    num_val_samples = val_inputs.shape[0]
+    if val_fraction < 1.0 and num_val_samples > 0:
+        subset_size = max(1, int(num_val_samples * val_fraction))
+        val_indices = torch.randperm(num_val_samples)[:subset_size]
+        val_inputs_subset = val_inputs[val_indices]
+        val_outputs_subset = val_outputs[val_indices]
+    else:
+        val_inputs_subset = val_inputs
+        val_outputs_subset = val_outputs
 
     best_val_loss = float("inf")
 
@@ -111,7 +126,7 @@ def train_m5_transformer(
         epoch_aux_loss = 0.0
         num_batches = 0
 
-        for batch_inputs, batch_outputs in data_generator(inputs_train, outputs_train, batch_size):
+        for batch_inputs, batch_outputs in data_generator(inputs, outputs, batch_size):
             optimizer.zero_grad()
 
             pred = model(batch_inputs)  # [Batch, 1, 4]
@@ -137,10 +152,10 @@ def train_m5_transformer(
         # Validation phase
         model.eval()
         with torch.no_grad():
-            val_pred = model(inputs_val)  # [Batch, 1, 4]
+            val_pred = model(val_inputs_subset)  # [Batch, 1, 4]
 
-            val_final_loss = criterion(val_pred[:, :, 0:1], outputs_val).item()
-            val_aux_loss = criterion(val_pred[:, :, 3:4], outputs_val).item()
+            val_final_loss = criterion(val_pred[:, :, 0:1], val_outputs_subset).item()
+            val_aux_loss = criterion(val_pred[:, :, 3:4], val_outputs_subset).item()
             val_loss = val_final_loss + aux_weight * val_aux_loss
 
         print(
@@ -201,6 +216,11 @@ def main():
         "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_27_46_0.mcap",  # strong spring, mixed 200Hz
         "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_31_31_0.mcap",  # strong spring, mixed 200Hz
     ]
+    val_mcap_file_paths = [
+        "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-11_58_32_0.mcap",  # finger, mixed 200Hz
+        "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_18_38_0.mcap",  # weak spring, mixed 200Hz
+        "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_34_43_0.mcap",  # strong spring, mixed 200Hz
+    ]
 
     # Training knobs
     m5_trainable = False  # If False, M5 friction params stay frozen.
@@ -210,7 +230,7 @@ def main():
     num_epochs = 50
     learning_rate = 0.001
     batch_size = 1024
-    train_ratio = 0.9
+    val_fraction = 1.0
 
     print("Loading M5 friction model as initial guess...")
     m5_model = load_m5_model(
@@ -223,7 +243,7 @@ def main():
     print(f"  Motor gain trainable: {motor_gain_trainable}")
 
     print("Loading and processing MCAP files...")
-    all_inputs, all_outputs = load_mcap_files_parallel(
+    train_inputs, train_outputs = load_mcap_files_parallel(
         mcap_file_paths,
         freq=data_freq,
         input_cols=input_cols,
@@ -232,11 +252,25 @@ def main():
         stride=stride,
         prediction=prediction,
     )
-    all_inputs = all_inputs.to(device)
-    all_outputs = all_outputs.to(device)
+    train_inputs = train_inputs.to(device)
+    train_outputs = train_outputs.to(device)
 
-    inputs_normalized, inputs_mean, inputs_std = normalize_tensor(all_inputs)
-    outputs_normalized, outputs_mean, outputs_std = normalize_tensor(all_outputs)
+    val_inputs, val_outputs = load_mcap_files_parallel(
+        val_mcap_file_paths,
+        freq=data_freq,
+        input_cols=input_cols,
+        output_cols=output_cols,
+        history_size=history_size,
+        stride=stride,
+        prediction=prediction,
+    )
+    val_inputs = val_inputs.to(device)
+    val_outputs = val_outputs.to(device)
+
+    inputs_normalized, inputs_mean, inputs_std = normalize_tensor(train_inputs)
+    outputs_normalized, outputs_mean, outputs_std = normalize_tensor(train_outputs)
+    val_inputs_normalized = apply_normalization(val_inputs, inputs_mean, inputs_std)
+    val_outputs_normalized = apply_normalization(val_outputs, outputs_mean, outputs_std)
 
     delta_position_idx = input_cols.index("delta_position_rad_data")
     velocity_idx = input_cols.index("measured_velocity_rad_per_sec_data")
@@ -280,6 +314,8 @@ def main():
         combined_model,
         inputs_normalized,
         outputs_normalized,
+        val_inputs_normalized,
+        val_outputs_normalized,
         model_saver=model_saver,
         latest_prefix="m5_transformer_",
         aux_weight=aux_weight,
@@ -287,7 +323,7 @@ def main():
         num_epochs=num_epochs,
         learning_rate=learning_rate,
         batch_size=batch_size,
-        train_ratio=train_ratio,
+        val_fraction=val_fraction,
     )
 
     # Save the jointly fitted M5 parameters for inspection.

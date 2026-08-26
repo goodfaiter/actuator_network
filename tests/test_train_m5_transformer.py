@@ -235,6 +235,8 @@ def test_train_m5_transformer_updates_m5_when_trainable():
 
         inputs = torch.randn(64, 2, 2)
         outputs = torch.randn(64, 1, 1)
+        val_inputs = torch.randn(16, 2, 2)
+        val_outputs = torch.randn(16, 1, 1)
         initial_kv = float(torch.nn.functional.softplus(combined.m5.K_v_log).item())
 
         with patch("actuator_network.train_m5_transformer.wandb") as mock_wandb:
@@ -243,6 +245,8 @@ def test_train_m5_transformer_updates_m5_when_trainable():
                 combined,
                 inputs,
                 outputs,
+                val_inputs,
+                val_outputs,
                 model_saver=saver,
                 num_epochs=2,
                 batch_size=16,
@@ -268,6 +272,8 @@ def test_train_m5_transformer_keeps_m5_fixed_when_not_trainable():
 
         inputs = torch.randn(64, 2, 2)
         outputs = torch.randn(64, 1, 1)
+        val_inputs = torch.randn(16, 2, 2)
+        val_outputs = torch.randn(16, 1, 1)
         initial_kv = float(torch.nn.functional.softplus(combined.m5.K_v_log).item())
 
         with patch("actuator_network.train_m5_transformer.wandb") as mock_wandb:
@@ -276,6 +282,8 @@ def test_train_m5_transformer_keeps_m5_fixed_when_not_trainable():
                 combined,
                 inputs,
                 outputs,
+                val_inputs,
+                val_outputs,
                 model_saver=saver,
                 num_epochs=2,
                 batch_size=16,
@@ -304,6 +312,8 @@ def test_train_m5_transformer_updates_motor_gain_when_trainable():
 
         inputs = torch.randn(64, 2, 2)
         outputs = torch.randn(64, 1, 1)
+        val_inputs = torch.randn(16, 2, 2)
+        val_outputs = torch.randn(16, 1, 1)
         initial_gain = _initial_motor_gain(combined)
 
         with patch("actuator_network.train_m5_transformer.wandb") as mock_wandb:
@@ -312,6 +322,8 @@ def test_train_m5_transformer_updates_motor_gain_when_trainable():
                 combined,
                 inputs,
                 outputs,
+                val_inputs,
+                val_outputs,
                 model_saver=saver,
                 num_epochs=2,
                 batch_size=16,
@@ -339,6 +351,8 @@ def test_train_m5_transformer_keeps_motor_gain_fixed_when_not_trainable():
 
         inputs = torch.randn(64, 2, 2)
         outputs = torch.randn(64, 1, 1)
+        val_inputs = torch.randn(16, 2, 2)
+        val_outputs = torch.randn(16, 1, 1)
         initial_gain = _initial_motor_gain(combined)
 
         with patch("actuator_network.train_m5_transformer.wandb") as mock_wandb:
@@ -347,6 +361,8 @@ def test_train_m5_transformer_keeps_motor_gain_fixed_when_not_trainable():
                 combined,
                 inputs,
                 outputs,
+                val_inputs,
+                val_outputs,
                 model_saver=saver,
                 num_epochs=2,
                 batch_size=16,

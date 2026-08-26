@@ -10,6 +10,7 @@ import torch
 from actuator_network.helpers.data_pipeline import load_mcap_dataframes_parallel
 from actuator_network.helpers.pandas_to_mcap import data_df_to_mcap
 from actuator_network.helpers.pandas_to_torch import (
+    apply_normalization,
     normalize_tensor,
     pandas_to_torch,
     process_inputs_time_series,
@@ -86,14 +87,33 @@ def main():
         "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_27_46_0.mcap",  # strong spring, mixed 200Hz
         "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_31_31_0.mcap",  # strong spring, mixed 200Hz
     ]
+    val_mcap_file_paths = [
+        "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-11_58_32_0.mcap",  # finger, mixed 200Hz
+        "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_18_38_0.mcap",  # weak spring, mixed 200Hz
+        "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_34_43_0.mcap",  # strong spring, mixed 200Hz
+    ]
 
-    print("Loading and processing MCAP files in parallel...")
-    dataframes = load_mcap_dataframes_parallel(mcap_file_paths, freq=data_freq)
-    for mcap_file_path, df in zip(mcap_file_paths, dataframes):
+    print("Loading and processing training MCAP files in parallel...")
+    train_dataframes = load_mcap_dataframes_parallel(mcap_file_paths, freq=data_freq)
+    for mcap_file_path, df in zip(mcap_file_paths, train_dataframes):
         data_df_to_mcap(df, mcap_file_path.replace(".mcap", "_processed.mcap"))
 
-    all_inputs, all_outputs = build_autoregressive_dataset(
-        dataframes,
+    print("Loading and processing validation MCAP files in parallel...")
+    val_dataframes = load_mcap_dataframes_parallel(val_mcap_file_paths, freq=data_freq)
+    for mcap_file_path, df in zip(val_mcap_file_paths, val_dataframes):
+        data_df_to_mcap(df, mcap_file_path.replace(".mcap", "_processed.mcap"))
+
+    train_inputs, train_outputs = build_autoregressive_dataset(
+        train_dataframes,
+        input_cols=INPUT_COLS,
+        output_cols=OUTPUT_COLS,
+        history_size=history_size,
+        stride=stride,
+        prediction=prediction,
+        device=device,
+    )
+    val_inputs, val_outputs = build_autoregressive_dataset(
+        val_dataframes,
         input_cols=INPUT_COLS,
         output_cols=OUTPUT_COLS,
         history_size=history_size,
@@ -102,8 +122,10 @@ def main():
         device=device,
     )
 
-    inputs_normalized, inputs_mean, inputs_std = normalize_tensor(all_inputs)
-    outputs_normalized, outputs_mean, outputs_std = normalize_tensor(all_outputs)
+    inputs_normalized, inputs_mean, inputs_std = normalize_tensor(train_inputs)
+    outputs_normalized, outputs_mean, outputs_std = normalize_tensor(train_outputs)
+    val_inputs_normalized = apply_normalization(val_inputs, inputs_mean, inputs_std)
+    val_outputs_normalized = apply_normalization(val_outputs, outputs_mean, outputs_std)
 
     model = TorchTransformerModel(
         input_size=inputs_normalized.shape[-1],
@@ -132,6 +154,8 @@ def main():
         model,
         inputs_normalized,
         outputs_normalized,
+        val_inputs_normalized,
+        val_outputs_normalized,
         model_saver=model_saver,
         latest_prefix="transformer_autoregressive_",
     )
