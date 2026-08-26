@@ -16,6 +16,7 @@ import torch.nn as nn
 from actuator_network.helpers.data_pipeline import load_mcap_dataframes_parallel
 from actuator_network.helpers.pandas_to_mcap import data_df_to_mcap
 from actuator_network.helpers.pandas_to_torch import (
+    apply_normalization,
     normalize_tensor,
     pandas_to_torch,
 )
@@ -258,6 +259,14 @@ def main():
         ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_27_46_0.mcap", 1.0),
         ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_31_31_0.mcap", 1.0),
     ]
+    val_mcap_files: list[tuple[str, float]] = [
+        # finger, mixed 200Hz
+        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-11_58_32_0.mcap", 0.5),
+        # weak spring, mixed 200Hz
+        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_18_38_0.mcap", 0.0),
+        # strong spring, mixed 200Hz
+        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_34_43_0.mcap", 1.0),
+    ]
 
     # Training knobs.
     aux_weight = 1.0
@@ -265,7 +274,6 @@ def main():
     learning_rate = 0.001
     batch_size = 512
     accumulation_steps = 2  # effective batch size = batch_size * accumulation_steps
-    train_ratio = 0.9
     spring_alpha = 0.05
     spring_dropout = 0.2
     force_dropout = 0.1
@@ -273,16 +281,37 @@ def main():
     weight_decay = 1e-5
     scheduler_type = "cosine"
     max_grad_norm = 1.0
+    val_fraction = 0.2
 
-    print("Loading and processing MCAP files...")
-    dataframes = load_mcap_dataframes_parallel([path for path, _ in mcap_files], freq=data_freq)
-    for (mcap_file_path, _), df in zip(mcap_files, dataframes):
+    print("Loading and processing training MCAP files...")
+    train_dataframes = load_mcap_dataframes_parallel([path for path, _ in mcap_files], freq=data_freq)
+    for (mcap_file_path, _), df in zip(mcap_files, train_dataframes):
         data_df_to_mcap(df, mcap_file_path.replace(".mcap", "_processed.mcap"))
 
-    print("Building spring/force dataset...")
-    spring_windows, force_windows, spring_targets, force_targets = build_estimated_spring_dataset(
-        dataframes,
-        mcap_files,
+    print("Loading and processing validation MCAP files...")
+    val_dataframes = load_mcap_dataframes_parallel([path for path, _ in val_mcap_files], freq=data_freq)
+    for (mcap_file_path, _), df in zip(val_mcap_files, val_dataframes):
+        data_df_to_mcap(df, mcap_file_path.replace(".mcap", "_processed.mcap"))
+
+    print("Building spring/force training dataset...")
+    train_spring_windows, train_force_windows, train_spring_targets, train_force_targets = (
+        build_estimated_spring_dataset(
+            train_dataframes,
+            mcap_files,
+            spring_history_size=spring_history_size,
+            history_size=history_size,
+            spring_stride=spring_stride,
+            force_stride=stride,
+            prediction=prediction,
+            velocity_threshold=velocity_threshold,
+            device=device,
+        )
+    )
+
+    print("Building spring/force validation dataset...")
+    val_spring_windows, val_force_windows, val_spring_targets, val_force_targets = build_estimated_spring_dataset(
+        val_dataframes,
+        val_mcap_files,
         spring_history_size=spring_history_size,
         history_size=history_size,
         spring_stride=spring_stride,
@@ -292,11 +321,16 @@ def main():
         device=device,
     )
 
-    # Normalize inputs and targets once. The shared trainer receives normalized tensors.
-    spring_windows_norm, spring_input_mean, spring_input_std = normalize_tensor(spring_windows)
-    spring_targets_norm, spring_output_mean, spring_output_std = normalize_tensor(spring_targets)
-    force_windows_norm, force_input_base_mean, force_input_base_std = normalize_tensor(force_windows)
-    force_targets_norm, force_output_mean, force_output_std = normalize_tensor(force_targets)
+    # Normalize inputs and targets using training statistics only.
+    spring_windows_norm, spring_input_mean, spring_input_std = normalize_tensor(train_spring_windows)
+    spring_targets_norm, spring_output_mean, spring_output_std = normalize_tensor(train_spring_targets)
+    force_windows_norm, force_input_base_mean, force_input_base_std = normalize_tensor(train_force_windows)
+    force_targets_norm, force_output_mean, force_output_std = normalize_tensor(train_force_targets)
+
+    val_spring_windows_norm = apply_normalization(val_spring_windows, spring_input_mean, spring_input_std)
+    val_spring_targets_norm = apply_normalization(val_spring_targets, spring_output_mean, spring_output_std)
+    val_force_windows_norm = apply_normalization(val_force_windows, force_input_base_mean, force_input_base_std)
+    val_force_targets_norm = apply_normalization(val_force_targets, force_output_mean, force_output_std)
 
     # Package inputs/outputs for the shared trainer.
     # combined_inputs: tuple of (spring_windows, force_windows) because the two
@@ -304,11 +338,13 @@ def main():
     # combined_targets: [N, 1, 2] with channels [force, spring].
     combined_inputs = (spring_windows_norm, force_windows_norm)
     combined_targets = torch.cat([force_targets_norm, spring_targets_norm], dim=-1)
+    val_combined_inputs = (val_spring_windows_norm, val_force_windows_norm)
+    val_combined_targets = torch.cat([val_force_targets_norm, val_spring_targets_norm], dim=-1)
 
     # Create transformers with sizes derived from the data.
     spring_transformer = TorchTransformerModel(
-        input_size=spring_windows.shape[-1],
-        output_size=spring_targets.shape[-1],
+        input_size=train_spring_windows.shape[-1],
+        output_size=train_spring_targets.shape[-1],
         num_layers=2,
         history_size=spring_history_size,
         num_heads=2,
@@ -317,8 +353,8 @@ def main():
         dropout=spring_dropout,
     )
     force_transformer = TorchTransformerModel(
-        input_size=force_windows.shape[-1] + spring_targets.shape[-1],
-        output_size=force_targets.shape[-1],
+        input_size=train_force_windows.shape[-1] + train_spring_targets.shape[-1],
+        output_size=train_force_targets.shape[-1],
         num_layers=2,
         history_size=history_size,
         num_heads=2,
@@ -372,13 +408,15 @@ def main():
         training_model,
         combined_inputs,
         combined_targets,
+        val_combined_inputs,
+        val_combined_targets,
         model_saver=model_saver,
         latest_prefix="estimated_spring_transformer_",
         loss_fn=make_spring_force_loss(aux_weight),
         num_epochs=num_epochs,
         learning_rate=learning_rate,
         batch_size=batch_size,
-        train_ratio=train_ratio,
+        val_fraction=val_fraction,
         weight_decay=weight_decay,
         scheduler_type=scheduler_type,
         max_grad_norm=max_grad_norm,

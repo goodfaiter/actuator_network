@@ -24,6 +24,21 @@ def normalize_tensor(tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, 
     return normalized_tensor, mean, std
 
 
+def apply_normalization(tensor: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
+    """Apply pre-computed mean and standard deviation to normalize a tensor.
+
+    Args:
+        tensor (torch.Tensor): Input tensor of shape (batch_size, ..., feature_dim).
+        mean (torch.Tensor): Mean tensor of shape (1, feature_dim).
+        std (torch.Tensor): Standard deviation tensor of shape (1, feature_dim).
+
+    Returns:
+        torch.Tensor: Normalized tensor with the same shape as ``tensor``.
+    """
+    with torch.no_grad():
+        return (tensor - mean) / std
+
+
 def process_inputs(data: torch.Tensor, stride: int, num_hist: int, prediction: bool) -> torch.Tensor:
     """Create history vectors
     Args:

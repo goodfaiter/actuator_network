@@ -6,38 +6,6 @@ import wandb
 from actuator_network.helpers.wrapper import ModelSaver
 
 
-def split_data(inputs, outputs, train_ratio=0.9):
-    """Split inputs and outputs into training and validation sets
-    Args:
-        inputs (torch.Tensor or tuple[torch.Tensor, ...]): Input tensor(s). When a tuple,
-            all tensors must share the same first dimension and are indexed with the same
-            permutation.
-        outputs (torch.Tensor): Output tensor of shape (num_samples, output_dim)
-        train_ratio (float): Ratio of data to use for training
-    Returns:
-        tuple: (train_inputs, train_outputs, val_inputs, val_outputs)
-    """
-    if isinstance(inputs, tuple):
-        num_samples = inputs[0].shape[0]
-    else:
-        num_samples = inputs.shape[0]
-    train_size = int(num_samples * train_ratio)
-
-    indices = torch.randperm(num_samples)
-    if isinstance(inputs, tuple):
-        inputs = tuple(inp[indices] for inp in inputs)
-    else:
-        inputs = inputs[indices]
-    outputs = outputs[indices]
-
-    train_inputs = inputs[:train_size] if not isinstance(inputs, tuple) else tuple(inp[:train_size] for inp in inputs)
-    train_outputs = outputs[:train_size]
-    val_inputs = inputs[train_size:] if not isinstance(inputs, tuple) else tuple(inp[train_size:] for inp in inputs)
-    val_outputs = outputs[train_size:]
-
-    return train_inputs, train_outputs, val_inputs, val_outputs
-
-
 def data_generator(inputs, outputs, batch_size):
     """Generate batches of data
     Args:
@@ -65,17 +33,52 @@ def data_generator(inputs, outputs, batch_size):
         yield batch_inputs, outputs[batch_indices]
 
 
+def _fixed_random_subset(inputs, outputs, fraction: float):
+    """Return a fixed random subset of validation inputs and outputs.
+
+    The subset is computed once and reused across calls. This saves validation
+    time when the full validation set is large.
+
+    Args:
+        inputs (torch.Tensor or tuple[torch.Tensor, ...]): Input tensor(s). When a
+            tuple, all tensors must share the same first dimension.
+        outputs (torch.Tensor): Output tensor.
+        fraction (float): Fraction of the validation data to use (0.0, 1.0].
+
+    Returns:
+        tuple: (subset_inputs, subset_outputs)
+    """
+    if isinstance(inputs, tuple):
+        num_samples = inputs[0].shape[0]
+    else:
+        num_samples = inputs.shape[0]
+
+    if fraction >= 1.0 or num_samples == 0:
+        return inputs, outputs
+
+    subset_size = max(1, int(num_samples * fraction))
+    indices = torch.randperm(num_samples)[:subset_size]
+
+    if isinstance(inputs, tuple):
+        subset_inputs = tuple(inp[indices] for inp in inputs)
+    else:
+        subset_inputs = inputs[indices]
+    return subset_inputs, outputs[indices]
+
+
 def train(
     model,
     inputs,
     outputs,
+    val_inputs,
+    val_outputs,
     model_saver: ModelSaver = None,
     latest_prefix: str = "",
     loss_fn=None,
     num_epochs: int = 50,
     learning_rate: float = 0.001,
     batch_size: int = 1024,
-    train_ratio: float = 0.9,
+    val_fraction: float = 0.2,
     weight_decay: float = 0.0,
     scheduler_type: str = "none",
     scheduler_step_size: int = 10,
@@ -88,15 +91,18 @@ def train(
 
     Args:
         model: The PyTorch model to train
-        inputs: Input tensor or tuple of tensors
-        outputs: Output tensor
+        inputs: Input tensor or tuple of tensors for training
+        outputs: Output tensor for training
+        val_inputs: Input tensor or tuple of tensors for validation
+        val_outputs: Output tensor for validation
         model_saver: ModelSaver instance for saving
         latest_prefix: Optional prefix inserted before "best_"/"final_" for latest checkpoint names.
         loss_fn: Optional custom loss function. If None, MSE loss is used.
         num_epochs: Number of training epochs.
         learning_rate: Adam learning rate.
         batch_size: Training batch size.
-        train_ratio: Fraction of data to use for training.
+        val_fraction: Fraction of the validation set to use each epoch. The subset
+            is randomly sampled once at the start of training to save time.
         weight_decay: Adam weight decay (L2 penalty).
         scheduler_type: Learning-rate scheduler type. One of ``"none"``, ``"cosine"``, ``"step"``.
         scheduler_step_size: Period for StepLR, in epochs.
@@ -115,7 +121,7 @@ def train(
             "batch_size": batch_size,
             "accumulation_steps": accumulation_steps,
             "num_epochs": num_epochs,
-            "train_ratio": train_ratio,
+            "val_fraction": val_fraction,
             "weight_decay": weight_decay,
             "scheduler_type": scheduler_type,
         }
@@ -123,8 +129,9 @@ def train(
     wandb.log({"Model": str(model)})
     # wandb.watch(model, log="all", log_freq=100)
 
-    # Split data
-    inputs_train, outputs_train, inputs_val, outputs_val = split_data(inputs, outputs, train_ratio=train_ratio)
+    # Compute a single fixed random validation subset to save time.
+    val_inputs_subset, val_outputs_subset = _fixed_random_subset(val_inputs, val_outputs, val_fraction)
+
     criterion = torch.nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
@@ -140,7 +147,7 @@ def train(
     best_val_loss = float("inf")
 
     for epoch in range(num_epochs):
-        data_generator_train = data_generator(inputs_train, outputs_train, batch_size)
+        data_generator_train = data_generator(inputs, outputs, batch_size)
 
         # Training phase
         model.train()
@@ -192,7 +199,9 @@ def train(
         val_loss_sum = 0.0
         val_num_batches = 0
         with torch.no_grad():
-            for val_batch_inputs, val_batch_outputs in data_generator(inputs_val, outputs_val, batch_size):
+            for val_batch_inputs, val_batch_outputs in data_generator(
+                val_inputs_subset, val_outputs_subset, batch_size
+            ):
                 if isinstance(val_batch_inputs, tuple):
                     val_predictions = model(*val_batch_inputs)
                 else:
@@ -247,6 +256,7 @@ def train_stateful(
     chunk_batch_size: int = 4,
     max_grad_norm: float = 1.0,
     latest_prefix: str = "",
+    val_fraction: float = 1.0,
 ):
     """Train a recurrent model statefully with truncated backpropagation through time.
 
@@ -264,6 +274,9 @@ def train_stateful(
         learning_rate: Optimizer learning rate.
         chunk_batch_size: Number of consecutive chunks to process before a backward pass.
         max_grad_norm: Maximum gradient norm for clipping.
+        latest_prefix: Prefix inserted before "best_"/"final_" in latest checkpoint names.
+        val_fraction: Fraction of the validation set to use each epoch. The subset
+            is randomly sampled once at the start of training to save time.
     """
     wandb.config.update(
         {
@@ -271,9 +284,13 @@ def train_stateful(
             "num_epochs": num_epochs,
             "chunk_batch_size": chunk_batch_size,
             "max_grad_norm": max_grad_norm,
+            "val_fraction": val_fraction,
         }
     )
     wandb.log({"Model": str(model)})
+
+    # Compute a single fixed random validation subset to save time.
+    val_inputs_subset, val_targets_subset = _fixed_random_subset(val_inputs, val_targets, val_fraction)
 
     criterion = torch.nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -325,14 +342,14 @@ def train_stateful(
         num_val_batches = 0
         h0 = None
         with torch.no_grad():
-            num_val_chunks = val_inputs.shape[0]
+            num_val_chunks = val_inputs_subset.shape[0]
             for start in range(0, num_val_chunks, chunk_batch_size):
                 end = min(start + chunk_batch_size, num_val_chunks)
 
                 batch_loss = 0.0
                 for k in range(start, end):
-                    chunk = val_inputs[k : k + 1]
-                    target = val_targets[k : k + 1]
+                    chunk = val_inputs_subset[k : k + 1]
+                    target = val_targets_subset[k : k + 1]
 
                     loss, h0 = _process_chunk(model, chunk, target, h0)
                     batch_loss += loss
