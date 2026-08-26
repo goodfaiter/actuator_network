@@ -7,13 +7,18 @@ otherwise the previous buffer is reused. The force transformer receives
 [delta_position, velocity, estimated_spring] and estimates
 ``tendon_bota_force_newton_data``. Both transformers are trained end-to-end
 with a combined loss: force MSE + auxiliary spring MSE.
+
+Hyperparameters are read from ``wandb.config`` so this script can be used as the
+program for a W&B sweep agent. When run manually, it falls back to the defaults.
 """
 
 import pandas as pd
 import torch
 import torch.nn as nn
 
-from actuator_network.helpers.data_pipeline import load_mcap_dataframes_parallel
+import wandb
+from actuator_network.helpers.data_pipeline import load_mcap_dataframes_parallel_cached
+from actuator_network.helpers.hyperparameters import EstimatedSpringTransformerConfig
 from actuator_network.helpers.pandas_to_mcap import data_df_to_mcap
 from actuator_network.helpers.pandas_to_torch import (
     apply_normalization,
@@ -29,6 +34,7 @@ from actuator_network.helpers.trainer import train
 from actuator_network.helpers.wrapper import ModelSaver, ScaledModelWrapper
 
 OUTPUT_DIR = "/workspace/data/output_data/"
+DEFAULT_WANDB_PROJECT = "actuator_network"
 
 INPUT_COLS = ["measured_position_rad_data", "desired_position_rad_data", "measured_velocity_rad_per_sec_data"]
 OUTPUT_COL = "tendon_bota_force_newton_data"
@@ -235,75 +241,44 @@ def make_input_noise_transform(noise_std: float):
     return transform
 
 
-def main():
-    # Configuration.
-    data_freq = 200
-    stride = 2
-    spring_stride = 4
-    inference_freq = data_freq // stride
-    prediction = False
-    spring_history_size = 600
-    history_size = 150
-    velocity_threshold = 0.5
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def train_estimated_spring_transformer(
+    config: EstimatedSpringTransformerConfig,
+    train_dataframes: list[pd.DataFrame],
+    val_dataframes: list[pd.DataFrame],
+    mcap_files: list[tuple[str, float]],
+    val_mcap_files: list[tuple[str, float]],
+    device: torch.device,
+    latest_prefix: str,
+) -> None:
+    """Train an estimated-spring transformer with the given configuration.
+
+    Args:
+        config: Hyperparameter configuration.
+        train_dataframes: Processed training DataFrames.
+        val_dataframes: Processed validation DataFrames.
+        mcap_files: Training MCAP paths with spring labels.
+        val_mcap_files: Validation MCAP paths with spring labels.
+        device: Torch device.
+        latest_prefix: Prefix for the latest checkpoint file name.
+    """
+    inference_freq = config.data_freq // config.force_stride
     output_cols = [OUTPUT_COL, SPRING_COL]
 
-    mcap_files: list[tuple[str, float]] = [
-        # finger, mixed 200Hz
-        ("/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_03_30_0.mcap", 0.5),
-        ("/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_52_16_0.mcap", 0.5),
-        # weak spring, mixed 200Hz
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_11_49_0.mcap", 0.0),
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_15_46_0.mcap", 0.0),
-        # strong spring, mixed 200Hz
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_27_46_0.mcap", 1.0),
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_31_31_0.mcap", 1.0),
-    ]
-    val_mcap_files: list[tuple[str, float]] = [
-        # finger, mixed 200Hz
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-11_58_32_0.mcap", 0.5),
-        # weak spring, mixed 200Hz
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_18_38_0.mcap", 0.0),
-        # strong spring, mixed 200Hz
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_34_43_0.mcap", 1.0),
-    ]
-
-    # Training knobs.
-    aux_weight = 1.0
-    num_epochs = 50
-    learning_rate = 0.001
-    batch_size = 512
-    accumulation_steps = 2  # effective batch size = batch_size * accumulation_steps
-    spring_alpha = 0.05
-    spring_dropout = 0.2
-    force_dropout = 0.1
-    input_noise_std = 0.01
-    weight_decay = 1e-5
-    scheduler_type = "cosine"
-    max_grad_norm = 1.0
-    val_fraction = 0.2
-
-    print("Loading and processing training MCAP files...")
-    train_dataframes = load_mcap_dataframes_parallel([path for path, _ in mcap_files], freq=data_freq)
-    for (mcap_file_path, _), df in zip(mcap_files, train_dataframes):
-        data_df_to_mcap(df, mcap_file_path.replace(".mcap", "_processed.mcap"))
-
-    print("Loading and processing validation MCAP files...")
-    val_dataframes = load_mcap_dataframes_parallel([path for path, _ in val_mcap_files], freq=data_freq)
-    for (mcap_file_path, _), df in zip(val_mcap_files, val_dataframes):
-        data_df_to_mcap(df, mcap_file_path.replace(".mcap", "_processed.mcap"))
-
-    print("Building spring/force training dataset...")
+    print(
+        "Building spring/force training dataset ("
+        f"spring_history_size={config.spring_history_size}, spring_stride={config.spring_stride}, "
+        f"force_history_size={config.force_history_size}, force_stride={config.force_stride})..."
+    )
     train_spring_windows, train_force_windows, train_spring_targets, train_force_targets = (
         build_estimated_spring_dataset(
             train_dataframes,
             mcap_files,
-            spring_history_size=spring_history_size,
-            history_size=history_size,
-            spring_stride=spring_stride,
-            force_stride=stride,
-            prediction=prediction,
-            velocity_threshold=velocity_threshold,
+            spring_history_size=config.spring_history_size,
+            history_size=config.force_history_size,
+            spring_stride=config.spring_stride,
+            force_stride=config.force_stride,
+            prediction=config.prediction,
+            velocity_threshold=config.velocity_threshold,
             device=device,
         )
     )
@@ -312,12 +287,12 @@ def main():
     val_spring_windows, val_force_windows, val_spring_targets, val_force_targets = build_estimated_spring_dataset(
         val_dataframes,
         val_mcap_files,
-        spring_history_size=spring_history_size,
-        history_size=history_size,
-        spring_stride=spring_stride,
-        force_stride=stride,
-        prediction=prediction,
-        velocity_threshold=velocity_threshold,
+        spring_history_size=config.spring_history_size,
+        history_size=config.force_history_size,
+        spring_stride=config.spring_stride,
+        force_stride=config.force_stride,
+        prediction=config.prediction,
+        velocity_threshold=config.velocity_threshold,
         device=device,
     )
 
@@ -345,22 +320,24 @@ def main():
     spring_transformer = TorchTransformerModel(
         input_size=train_spring_windows.shape[-1],
         output_size=train_spring_targets.shape[-1],
-        num_layers=2,
-        history_size=spring_history_size,
-        num_heads=2,
-        hidden_dim=32,
+        num_layers=config.spring_num_layers,
+        history_size=config.spring_history_size,
+        num_heads=config.spring_num_heads,
+        hidden_dim=config.spring_hidden_dim,
         device=device,
-        dropout=spring_dropout,
+        dropout=config.spring_dropout,
+        activation=config.spring_activation,
     )
     force_transformer = TorchTransformerModel(
         input_size=train_force_windows.shape[-1] + train_spring_targets.shape[-1],
         output_size=train_force_targets.shape[-1],
-        num_layers=2,
-        history_size=history_size,
-        num_heads=2,
-        hidden_dim=32,
+        num_layers=config.force_num_layers,
+        history_size=config.force_history_size,
+        num_heads=config.force_num_heads,
+        hidden_dim=config.force_hidden_dim,
         device=device,
-        dropout=force_dropout,
+        dropout=config.force_dropout,
+        activation=config.force_activation,
     )
 
     training_model = SpringForceTrainingModel(
@@ -377,10 +354,10 @@ def main():
         spring_input_mean=spring_input_mean,
         spring_input_std=spring_input_std,
         velocity_idx=INPUT_COLS.index("measured_velocity_rad_per_sec_data"),
-        velocity_threshold=velocity_threshold,
-        spring_alpha=spring_alpha,
-        spring_stride=spring_stride,
-        force_stride=stride,
+        velocity_threshold=config.velocity_threshold,
+        spring_alpha=config.spring_alpha,
+        spring_stride=config.spring_stride,
+        force_stride=config.force_stride,
     ).to(device)
 
     # Output stats are per-channel: force uses force output stats, spring uses spring output stats.
@@ -394,11 +371,11 @@ def main():
         combined_output_mean,
         combined_output_std,
         frequency=inference_freq,
-        history_size=history_size,
-        stride=stride,
-        spring_stride=spring_stride,
-        spring_history_size=spring_history_size,
-        prediction=prediction,
+        history_size=config.force_history_size,
+        stride=config.force_stride,
+        spring_stride=config.spring_stride,
+        spring_history_size=config.spring_history_size,
+        prediction=config.prediction,
         input_columns=INPUT_COLS,
         output_columns=output_cols,
     )
@@ -411,17 +388,83 @@ def main():
         val_combined_inputs,
         val_combined_targets,
         model_saver=model_saver,
-        latest_prefix="estimated_spring_transformer_",
-        loss_fn=make_spring_force_loss(aux_weight),
-        num_epochs=num_epochs,
-        learning_rate=learning_rate,
-        batch_size=batch_size,
-        val_fraction=val_fraction,
-        weight_decay=weight_decay,
-        scheduler_type=scheduler_type,
-        max_grad_norm=max_grad_norm,
-        input_transform=make_input_noise_transform(input_noise_std),
-        accumulation_steps=accumulation_steps,
+        latest_prefix=latest_prefix,
+        loss_fn=make_spring_force_loss(config.aux_weight),
+        val_loss_fn=make_spring_force_loss(0.0),
+        num_epochs=config.num_epochs,
+        learning_rate=config.learning_rate,
+        batch_size=config.batch_size,
+        val_fraction=config.val_fraction,
+        weight_decay=config.weight_decay,
+        scheduler_type=config.scheduler_type,
+        max_grad_norm=config.max_grad_norm,
+        input_transform=make_input_noise_transform(config.input_noise_std),
+        accumulation_steps=config.accumulation_steps,
+    )
+
+
+def main():
+    # When launched by `wandb agent`, this init picks up the sweep config. For a
+    # manual run we explicitly set the project.
+    if wandb.run is None:
+        wandb.init(project=DEFAULT_WANDB_PROJECT)
+
+    config = EstimatedSpringTransformerConfig.from_wandb_config(wandb.config)
+    print(f"Using configuration: {config}")
+
+    if not config.is_valid():
+        print(f"Skipping invalid configuration: {config}")
+        wandb.run.summary["skipped_invalid"] = True
+        wandb.finish()
+        return
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    mcap_files: list[tuple[str, float]] = [
+        # finger, mixed 200Hz
+        ("/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_03_30_0.mcap", 0.5),
+        ("/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_52_16_0.mcap", 0.5),
+        # weak spring, mixed 200Hz
+        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_11_49_0.mcap", 0.0),
+        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_15_46_0.mcap", 0.0),
+        # strong spring, mixed 200Hz
+        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_27_46_0.mcap", 1.0),
+        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_31_31_0.mcap", 1.0),
+    ]
+    val_mcap_files: list[tuple[str, float]] = [
+        # finger, mixed 200Hz
+        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-11_58_32_0.mcap", 0.5),
+        # weak spring, mixed 200Hz
+        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_18_38_0.mcap", 0.0),
+        # strong spring, mixed 200Hz
+        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_34_43_0.mcap", 1.0),
+    ]
+
+    print("Loading and processing training MCAP files...")
+    train_dataframes = load_mcap_dataframes_parallel_cached([path for path, _ in mcap_files], freq=config.data_freq)
+    for (mcap_file_path, _), df in zip(mcap_files, train_dataframes):
+        data_df_to_mcap(df, mcap_file_path.replace(".mcap", "_processed.mcap"))
+
+    print("Loading and processing validation MCAP files...")
+    val_dataframes = load_mcap_dataframes_parallel_cached([path for path, _ in val_mcap_files], freq=config.data_freq)
+    for (mcap_file_path, _), df in zip(val_mcap_files, val_dataframes):
+        data_df_to_mcap(df, mcap_file_path.replace(".mcap", "_processed.mcap"))
+
+    latest_prefix = (
+        f"estimated_spring_transformer_sweep_{wandb.run.id}_"
+        if wandb.run.sweep_id is not None
+        else "estimated_spring_transformer_"
+    )
+
+    print("Running training...")
+    train_estimated_spring_transformer(
+        config,
+        train_dataframes,
+        val_dataframes,
+        mcap_files,
+        val_mcap_files,
+        device,
+        latest_prefix=latest_prefix,
     )
 
 

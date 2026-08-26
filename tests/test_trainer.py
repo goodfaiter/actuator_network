@@ -92,3 +92,39 @@ def test_train_uses_fixed_val_subset():
 
         assert os.path.isfile(os.path.join(tmpdir, "best_latest.pt"))
         assert os.path.isfile(os.path.join(tmpdir, "final_latest.pt"))
+
+
+def test_train_uses_separate_val_loss_fn():
+    """When val_loss_fn is provided, validation should use it instead of loss_fn."""
+    wrapped = _make_wrapped_model()
+    inputs = torch.randn(32, 2)
+    outputs = torch.randn(32, 1)
+    val_inputs = torch.randn(16, 2)
+    val_outputs = torch.randn(16, 1)
+
+    def _train_loss_fn(pred, target):
+        return torch.nn.functional.mse_loss(pred, target)
+
+    def _val_loss_fn(pred, target):
+        # A different loss value so we can detect which was used for validation.
+        return torch.tensor(0.123)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("actuator_network.helpers.trainer.wandb") as mock_wandb:
+            mock_wandb.init.return_value = MagicMock()
+            saver = ModelSaver(wrapped, tmpdir)
+            train(
+                wrapped,
+                inputs,
+                outputs,
+                val_inputs,
+                val_outputs,
+                model_saver=saver,
+                num_epochs=1,
+                batch_size=8,
+                loss_fn=_train_loss_fn,
+                val_loss_fn=_val_loss_fn,
+            )
+
+        assert os.path.isfile(os.path.join(tmpdir, "best_latest.pt"))
+        assert os.path.isfile(os.path.join(tmpdir, "final_latest.pt"))

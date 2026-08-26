@@ -5,6 +5,22 @@ import torch
 from actuator_network.helpers.m5_model import M5FrictionModel
 
 
+def _get_activation(activation: str) -> torch.nn.Module:
+    """Return a PyTorch activation module from its name."""
+    activations = {
+        "relu": torch.nn.ReLU(),
+        "tanh": torch.nn.Tanh(),
+        "gelu": torch.nn.GELU(),
+        "leaky_relu": torch.nn.LeakyReLU(),
+        "elu": torch.nn.ELU(),
+        "silu": torch.nn.SiLU(),
+    }
+    activation = activation.lower()
+    if activation not in activations:
+        raise ValueError(f"Unsupported activation: {activation}. Choose from {list(activations.keys())}")
+    return activations[activation]
+
+
 class TorchMlpModel(torch.nn.Module):
     def __init__(self, input_size: int, output_size: int, hidden_layers: list, device: torch.device):
         super(TorchMlpModel, self).__init__()
@@ -61,8 +77,11 @@ class TorchTransformerModel(torch.nn.Module):
         hidden_dim: int,
         device: torch.device,
         dropout: float = 0.1,
+        activation: str = "relu",
     ):
         super(TorchTransformerModel, self).__init__()
+
+        activation_module = _get_activation(activation)
 
         # Input projection
         self.input_projection = torch.nn.Linear(input_size, hidden_dim, device=device)
@@ -78,7 +97,7 @@ class TorchTransformerModel(torch.nn.Module):
             batch_first=True,
             device=device,
             dropout=dropout,
-            activation=torch.nn.ReLU(),
+            activation=activation_module,
         )
         self.transformer = torch.nn.TransformerEncoder(
             encoder_layer,
@@ -88,10 +107,10 @@ class TorchTransformerModel(torch.nn.Module):
         # Output layer (taking only the last timestep)
         self.output_sequence = torch.nn.Sequential(
             torch.nn.Linear(hidden_dim, hidden_dim // 2, device=device),
-            torch.nn.ReLU(),
+            _get_activation(activation),
             torch.nn.Dropout(dropout),
             torch.nn.Linear(hidden_dim // 2, hidden_dim // 4, device=device),
-            torch.nn.ReLU(),
+            _get_activation(activation),
             torch.nn.Dropout(dropout),
             torch.nn.Linear(hidden_dim // 4, output_size, device=device),
         )
