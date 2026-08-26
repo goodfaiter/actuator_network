@@ -60,6 +60,7 @@ class TorchTransformerModel(torch.nn.Module):
         num_heads: int,
         hidden_dim: int,
         device: torch.device,
+        dropout: float = 0.1,
     ):
         super(TorchTransformerModel, self).__init__()
 
@@ -76,7 +77,7 @@ class TorchTransformerModel(torch.nn.Module):
             dim_feedforward=hidden_dim * 4,
             batch_first=True,
             device=device,
-            dropout=0.1,
+            dropout=dropout,
             activation=torch.nn.ReLU(),
         )
         self.transformer = torch.nn.TransformerEncoder(
@@ -88,8 +89,10 @@ class TorchTransformerModel(torch.nn.Module):
         self.output_sequence = torch.nn.Sequential(
             torch.nn.Linear(hidden_dim, hidden_dim // 2, device=device),
             torch.nn.ReLU(),
+            torch.nn.Dropout(dropout),
             torch.nn.Linear(hidden_dim // 2, hidden_dim // 4, device=device),
             torch.nn.ReLU(),
+            torch.nn.Dropout(dropout),
             torch.nn.Linear(hidden_dim // 4, output_size, device=device),
         )
 
@@ -235,19 +238,21 @@ class PlainM5PhysicsModel(torch.nn.Module):
 class SpringTransformerForceEstimator(torch.nn.Module):
     """Stateful deployable model: spring-class estimator + force estimator.
 
-    The model receives a sliding window of ``[delta_position, velocity]``.
-    It maintains its own internal spring input buffer. When the last-step
-    ``|velocity|`` exceeds ``velocity_threshold`` the buffer is shifted and the
-    current sample appended; otherwise the buffer is held frozen. The spring
-    transformer is run on this buffer to produce a spring estimate, which is
-    repeated across the history dimension and concatenated to the incoming
-    ``[delta_position, velocity]`` window before the force transformer predicts
-    ``tendon_bota_force_newton_data``.
+    The model receives a sliding window of ``[delta_position, velocity]`` sampled
+    at ``force_stride``. It maintains its own internal spring input buffer sampled
+    at ``spring_stride``. When the last-step ``|velocity|`` exceeds
+    ``velocity_threshold`` and the current call coincides with a spring sample
+    instant, the buffer is shifted and the current sample appended; otherwise the
+    buffer is held frozen. The spring transformer is run on this buffer to produce
+    a spring estimate, which is repeated across the history dimension and
+    concatenated to the incoming ``[delta_position, velocity]`` window before the
+    force transformer predicts ``tendon_bota_force_newton_data``.
 
     All internal transformer inputs/outputs are normalized. The wrapper handles
     input normalization and output denormalization.
 
     Important: this model is designed for online inference with **batch size 1**.
+    ``spring_stride`` must be a multiple of ``force_stride`` and at least as large.
 
     The forward pass returns a 2-channel output:
         0: ``tendon_bota_force_newton_data`` (normalized with force output stats)
@@ -265,14 +270,22 @@ class SpringTransformerForceEstimator(torch.nn.Module):
         velocity_idx: int = 1,
         velocity_threshold: float = 0.1,
         spring_alpha: float = 0.9,
+        spring_stride: int = 1,
+        force_stride: int = 1,
     ) -> None:
         super().__init__()
         self.spring_transformer = spring_transformer
         self.force_transformer = force_transformer
 
-        # Infer history_size from the causal mask buffer of the spring transformer.
-        history_size = int(spring_transformer.causal_mask.size(0))
+        # Each transformer may have its own history size and stride.
+        spring_history_size = int(spring_transformer.causal_mask.size(0))
+        force_history_size = int(force_transformer.causal_mask.size(0))
         hidden_dim = spring_transformer.hidden_dim
+
+        if spring_stride % force_stride != 0:
+            raise ValueError(f"spring_stride ({spring_stride}) must be a multiple of force_stride ({force_stride})")
+        if spring_stride < force_stride:
+            raise ValueError(f"spring_stride ({spring_stride}) must be >= force_stride ({force_stride})")
 
         self.register_buffer("input_mean", input_mean.view(-1))
         self.register_buffer("input_std", input_std.view(-1))
@@ -280,22 +293,29 @@ class SpringTransformerForceEstimator(torch.nn.Module):
         self.register_buffer("spring_input_std", spring_input_std.view(-1))
         self.register_buffer("velocity_threshold", torch.tensor(velocity_threshold, dtype=torch.float32))
         self.register_buffer("spring_alpha", torch.tensor(spring_alpha, dtype=torch.float32))
+        self.register_buffer("spring_stride", torch.tensor(spring_stride, dtype=torch.int64))
+        self.register_buffer("force_stride", torch.tensor(force_stride, dtype=torch.int64))
+        self.register_buffer("spring_update_counter", torch.zeros(1, dtype=torch.int64))
         self.velocity_idx = velocity_idx
-        self.history_size = history_size
+        self.spring_history_size = spring_history_size
+        self.force_history_size = force_history_size
         self.hidden_dim = hidden_dim
 
         # Stateful buffers for online inference. The spring buffer stores
         # normalized values; initialize it to the normalized value of physical
         # zero so it matches the zero-filled training windows.
         spring_buffer_zero = (0.0 - self.spring_input_mean) / self.spring_input_std
-        self.register_buffer("spring_buffer", spring_buffer_zero.view(1, 1, -1).expand(1, history_size, -1).clone())
+        self.register_buffer(
+            "spring_buffer", spring_buffer_zero.view(1, 1, -1).expand(1, spring_history_size, -1).clone()
+        )
         self.register_buffer("last_spring", torch.zeros(1, 1, 1))
 
     def reset(self) -> None:
         """Clear the internal spring buffer and last spring estimate."""
         spring_buffer_zero = (0.0 - self.spring_input_mean) / self.spring_input_std
-        self.spring_buffer.copy_(spring_buffer_zero.view(1, 1, -1).expand(1, self.history_size, -1))
+        self.spring_buffer.copy_(spring_buffer_zero.view(1, 1, -1).expand(1, self.spring_history_size, -1))
         self.last_spring.zero_()
+        self.spring_update_counter.zero_()
 
     def _is_moving(self, velocity: torch.Tensor) -> torch.Tensor:
         return torch.abs(velocity) > self.velocity_threshold
@@ -304,15 +324,19 @@ class SpringTransformerForceEstimator(torch.nn.Module):
         # x shape: [1, History, Feature] (already normalized by ScaledModelWrapper)
         # Recover physical velocity only for the moving threshold check.
         last_velocity = (
-            x[0, -1, self.velocity_idx] * self.input_std[self.velocity_idx]
-            + self.input_mean[self.velocity_idx]
+            x[0, -1, self.velocity_idx] * self.input_std[self.velocity_idx] + self.input_mean[self.velocity_idx]
         )
 
-        if self._is_moving(last_velocity):
+        spring_update_ratio = int(self.spring_stride.item() // self.force_stride.item())
+        is_spring_sample = int(self.spring_update_counter.item()) % spring_update_ratio == 0
+
+        if is_spring_sample and self._is_moving(last_velocity):
             # Shift the spring buffer and append the current normalized sample.
             self.spring_buffer[0, :-1, :] = self.spring_buffer[0, 1:, :].clone()
             self.spring_buffer[0, -1, :] = x[0, -1, :]
         # else: keep the previous spring buffer frozen.
+
+        self.spring_update_counter.add_(1)
 
         # Run spring transformer on the normalized spring buffer.
         spring_pred_norm = self.spring_transformer(self.spring_buffer)  # [1, 1, 1]
@@ -323,7 +347,9 @@ class SpringTransformerForceEstimator(torch.nn.Module):
         self.last_spring.copy_(smoothed_spring)
 
         # Build force transformer input: [delta_position, velocity, spring].
-        spring_channel = smoothed_spring.expand(1, self.history_size, -1)
+        # The incoming force window may be shorter than the spring buffer, so
+        # expand the spring estimate to match the force transformer's input length.
+        spring_channel = smoothed_spring.expand(1, x.size(1), -1)
         force_input_norm = torch.cat([x, spring_channel], dim=-1)  # [1, History, 3]
         force_pred_norm = self.force_transformer(force_input_norm)  # [1, 1, 1]
 
@@ -336,9 +362,9 @@ class SpringForceTrainingModel(torch.nn.Module):
     """Joint training wrapper for the spring and force transformers.
 
     All inputs and outputs are expected to be already normalized. The input is
-    a single tensor of shape ``[Batch, 2, History, Feature Dim]`` where the
-    first slice along dim 1 is the frozen spring windows and the second slice
-    is the normal force base windows. The output is a single tensor of shape
+    a pair of tensors ``(spring_windows, force_windows)``. The spring windows
+    may be longer than the force windows; the spring prediction is repeated to
+    match the force window length. The output is a single tensor of shape
     ``[Batch, 1, 2]``:
         0: predicted force (normalized with force output stats)
         1: predicted spring coefficient (normalized with spring output stats)
@@ -353,19 +379,19 @@ class SpringForceTrainingModel(torch.nn.Module):
         self.spring_transformer = spring_transformer
         self.force_transformer = force_transformer
 
-        self.history_size = int(spring_transformer.causal_mask.size(0))
+        self.spring_history_size = int(spring_transformer.causal_mask.size(0))
+        self.force_history_size = int(force_transformer.causal_mask.size(0))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x shape: [Batch, 2, History, Feature Dim]
-        spring_windows = x[:, 0]
-        force_windows = x[:, 1]
+    def forward(self, spring_windows: torch.Tensor, force_windows: torch.Tensor) -> torch.Tensor:
+        # spring_windows shape: [Batch, Spring History, Feature Dim]
+        # force_windows shape: [Batch, Force History, Feature Dim]
 
         # Spring prediction (input is already normalized).
         spring_pred_norm = self.spring_transformer(spring_windows)  # [Batch, 1, 1]
 
         # The spring estimate is already normalized in spring-output space.
-        # Repeat it across the history dimension and feed it to the force transformer.
-        spring_channel = spring_pred_norm.expand(-1, self.history_size, -1)
+        # Repeat it across the force history dimension and feed it to the force transformer.
+        spring_channel = spring_pred_norm.expand(-1, force_windows.size(1), -1)
         force_input_norm = torch.cat([force_windows, spring_channel], dim=-1)
         force_pred_norm = self.force_transformer(force_input_norm)  # [Batch, 1, 1]
 

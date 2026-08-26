@@ -39,6 +39,7 @@ def _make_dummy_stats(device: torch.device, dims: int):
 
 def test_spring_force_training_model_forward():
     device = torch.device("cpu")
+    spring_history_size = 600
     history_size = 10
     batch_size = 4
 
@@ -46,7 +47,7 @@ def test_spring_force_training_model_forward():
         input_size=2,
         output_size=1,
         num_layers=1,
-        history_size=history_size,
+        history_size=spring_history_size,
         num_heads=2,
         hidden_dim=16,
         device=device,
@@ -68,23 +69,25 @@ def test_spring_force_training_model_forward():
 
     # Inputs are already normalized; zero mean / unit std dummy stats make the
     # raw random values valid normalized inputs for this smoke test.
-    spring_windows = torch.randn(batch_size, history_size, 2)
+    spring_windows = torch.randn(batch_size, spring_history_size, 2)
     force_windows = torch.randn(batch_size, history_size, 2)
-    combined_input = torch.stack([spring_windows, force_windows], dim=1)
-    pred = model(combined_input)
+    pred = model(spring_windows, force_windows)
 
     assert pred.shape == (batch_size, 1, 2)
 
 
 def test_spring_transformer_force_estimator_stateful():
     device = torch.device("cpu")
+    spring_history_size = 600
     history_size = 10
+    spring_stride = 2
+    force_stride = 2
 
     spring_transformer = TorchTransformerModel(
         input_size=2,
         output_size=1,
         num_layers=1,
-        history_size=history_size,
+        history_size=spring_history_size,
         num_heads=2,
         hidden_dim=16,
         device=device,
@@ -111,6 +114,8 @@ def test_spring_transformer_force_estimator_stateful():
         spring_input_std=spring_in_std,
         velocity_threshold=0.1,
         spring_alpha=1.0,
+        spring_stride=spring_stride,
+        force_stride=force_stride,
     )
     model.eval()
 
@@ -128,13 +133,16 @@ def test_spring_transformer_force_estimator_stateful():
 
 def test_spring_transformer_force_estimator_scriptable():
     device = torch.device("cpu")
+    spring_history_size = 600
     history_size = 10
+    spring_stride = 2
+    force_stride = 2
 
     spring_transformer = TorchTransformerModel(
         input_size=2,
         output_size=1,
         num_layers=1,
-        history_size=history_size,
+        history_size=spring_history_size,
         num_heads=2,
         hidden_dim=16,
         device=device,
@@ -160,6 +168,8 @@ def test_spring_transformer_force_estimator_scriptable():
         spring_input_mean=spring_in_mean,
         spring_input_std=spring_in_std,
         velocity_threshold=0.1,
+        spring_stride=spring_stride,
+        force_stride=force_stride,
     )
 
     scripted = torch.jit.script(model)
@@ -170,13 +180,16 @@ def test_spring_transformer_force_estimator_scriptable():
 
 def test_wrapped_spring_transformer_force_estimator_scriptable():
     device = torch.device("cpu")
+    spring_history_size = 600
     history_size = 10
+    spring_stride = 2
+    force_stride = 2
 
     spring_transformer = TorchTransformerModel(
         input_size=2,
         output_size=1,
         num_layers=1,
-        history_size=history_size,
+        history_size=spring_history_size,
         num_heads=2,
         hidden_dim=16,
         device=device,
@@ -205,6 +218,8 @@ def test_wrapped_spring_transformer_force_estimator_scriptable():
         spring_input_std=spring_in_std,
         velocity_threshold=0.1,
         spring_alpha=1.0,
+        spring_stride=spring_stride,
+        force_stride=force_stride,
     )
 
     combined_output_mean = torch.cat([force_out_mean, spring_out_mean], dim=-1)
@@ -218,7 +233,9 @@ def test_wrapped_spring_transformer_force_estimator_scriptable():
         combined_output_std,
         frequency=100,
         history_size=history_size,
-        stride=2,
+        stride=force_stride,
+        spring_stride=spring_stride,
+        spring_history_size=spring_history_size,
         prediction=False,
         input_columns=["delta_position_rad_data", "measured_velocity_rad_per_sec_data"],
         output_columns=["tendon_bota_force_newton_data", "spring_coeff"],
@@ -239,13 +256,16 @@ def test_wrapped_spring_transformer_force_estimator_scriptable():
 
 def test_spring_transformer_force_estimator_smoothing():
     device = torch.device("cpu")
+    spring_history_size = 600
     history_size = 10
+    spring_stride = 2
+    force_stride = 2
 
     spring_transformer = TorchTransformerModel(
         input_size=2,
         output_size=1,
         num_layers=1,
-        history_size=history_size,
+        history_size=spring_history_size,
         num_heads=2,
         hidden_dim=16,
         device=device,
@@ -273,9 +293,73 @@ def test_spring_transformer_force_estimator_smoothing():
         spring_input_std=spring_in_std,
         velocity_threshold=0.1,
         spring_alpha=0.0,
+        spring_stride=spring_stride,
+        force_stride=force_stride,
     )
     model.eval()
 
     static_input = torch.zeros(1, history_size, 2)
     out = model(static_input)
     assert torch.allclose(out[0, 0, 1], torch.tensor(0.0), atol=1e-6)
+
+
+def test_spring_transformer_force_estimator_stride_rate():
+    device = torch.device("cpu")
+    spring_history_size = 10
+    history_size = 5
+    spring_stride = 4
+    force_stride = 2
+
+    spring_transformer = TorchTransformerModel(
+        input_size=2,
+        output_size=1,
+        num_layers=1,
+        history_size=spring_history_size,
+        num_heads=2,
+        hidden_dim=16,
+        device=device,
+    )
+    force_transformer = TorchTransformerModel(
+        input_size=3,
+        output_size=1,
+        num_layers=1,
+        history_size=history_size,
+        num_heads=2,
+        hidden_dim=16,
+        device=device,
+    )
+
+    in_mean, in_std = _make_dummy_stats(device, 2)
+    spring_in_mean, spring_in_std = _make_dummy_stats(device, 2)
+
+    model = SpringTransformerForceEstimator(
+        spring_transformer=spring_transformer,
+        force_transformer=force_transformer,
+        input_mean=in_mean,
+        input_std=in_std,
+        spring_input_mean=spring_in_mean,
+        spring_input_std=spring_in_std,
+        velocity_threshold=0.1,
+        spring_alpha=1.0,
+        spring_stride=spring_stride,
+        force_stride=force_stride,
+    )
+
+    # Two different moving inputs. Dummy stats are zero mean / unit std, so
+    # normalized values equal raw values.
+    input_a = torch.zeros(1, history_size, 2)
+    input_a[0, -1, 1] = 1.0  # velocity above threshold
+    input_b = torch.ones(1, history_size, 2)
+    input_b[0, -1, 1] = 1.0  # velocity above threshold
+
+    # Call 0 is a spring sample: buffer should update to input_a.
+    _ = model(input_a)
+    assert torch.allclose(model.spring_buffer[0, -1, :], input_a[0, -1, :])
+
+    # Call 1 is not a spring sample: buffer should stay as input_a.
+    _ = model(input_b)
+    assert torch.allclose(model.spring_buffer[0, -1, :], input_a[0, -1, :])
+
+    # Call 2 is a spring sample again: buffer should update to input_b.
+    _ = model(input_b)
+    assert torch.allclose(model.spring_buffer[0, -1, :], input_b[0, -1, :])
