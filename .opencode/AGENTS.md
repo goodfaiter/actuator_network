@@ -170,6 +170,21 @@ Key configuration knobs in the training scripts:
 - `prediction` — `False` means estimation at the current timestep; `True` would shift labels forward.
 - `input_cols` / `output_cols` — which DataFrame columns are used.
 
+### Hyperparameter sweep with W&B
+
+`train_estimated_spring_transformer.py` is configured to run as the target program for a W&B sweep agent. Hyperparameters are read from `wandb.config` and fall back to the defaults in `EstimatedSpringTransformerConfig` for a manual run.
+
+- The sweep configuration lives in `wandb_sweep/sweep_estimated_spring_transformer.yaml`. Paste it into the W&B web UI when creating a new sweep.
+- Transformer hidden dimensions are reparameterized via `*_num_heads` and `*_hidden_dim_per_head`; `EstimatedSpringTransformerConfig.from_wandb_config()` computes `hidden_dim = num_heads * per_head` so the divisibility constraint is always satisfied.
+- Training uses a combined loss (`force MSE + aux_weight * spring MSE`), but validation (`val_loss`) uses only the force MSE (auxiliary spring loss disabled) for consistent comparison across runs.
+- Processed MCAP DataFrames are cached under `data/cache/processed_dataframes/` so sweep agents do not re-parse raw MCAPs on every run.
+- To launch agents after creating the sweep in W&B:
+  ```bash
+  cd /workspace
+  uv run wandb agent goodfaiter-epfl/actuator_network/<sweep-id>
+  ```
+- For a single manual run, use `uv run train-estimated-spring-transformer`.
+
 ### 3. Run inference
 
 ```bash

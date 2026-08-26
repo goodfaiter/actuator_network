@@ -75,10 +75,11 @@ def train(
     model_saver: ModelSaver = None,
     latest_prefix: str = "",
     loss_fn=None,
+    val_loss_fn: Callable | None = None,
     num_epochs: int = 50,
     learning_rate: float = 0.001,
     batch_size: int = 1024,
-    val_fraction: float = 0.2,
+    val_fraction: float = 1.0,
     weight_decay: float = 0.0,
     scheduler_type: str = "none",
     scheduler_step_size: int = 10,
@@ -86,6 +87,7 @@ def train(
     max_grad_norm: float | None = None,
     input_transform: Callable | None = None,
     accumulation_steps: int = 1,
+    wandb_project: str = "actuator_network",
 ):
     """Train the model with validation and model checkpointing
 
@@ -98,6 +100,8 @@ def train(
         model_saver: ModelSaver instance for saving
         latest_prefix: Optional prefix inserted before "best_"/"final_" for latest checkpoint names.
         loss_fn: Optional custom loss function. If None, MSE loss is used.
+        val_loss_fn: Optional custom loss function used only for validation. If None,
+            ``loss_fn`` is used for validation as well.
         num_epochs: Number of training epochs.
         learning_rate: Adam learning rate.
         batch_size: Training batch size.
@@ -113,8 +117,10 @@ def train(
             (tensor or tuple of tensors) as ``inputs``.
         accumulation_steps: Number of batches to accumulate gradients before an
             optimizer step. Effective batch size is ``batch_size * accumulation_steps``.
+        wandb_project: Weights & Biases project name.
     """
-    wandb.init(project="actuator_network")
+    if wandb.run is None:
+        wandb.init(project=wandb_project)
     wandb.config.update(
         {
             "learning_rate": learning_rate,
@@ -208,8 +214,9 @@ def train(
                     val_predictions = model(val_batch_inputs)
                 if isinstance(val_predictions, tuple):
                     val_predictions = val_predictions[0]
-                if loss_fn is not None:
-                    val_loss_sum += loss_fn(val_predictions, val_batch_outputs).item()
+                validation_loss_fn = val_loss_fn if val_loss_fn is not None else loss_fn
+                if validation_loss_fn is not None:
+                    val_loss_sum += validation_loss_fn(val_predictions, val_batch_outputs).item()
                 else:
                     val_loss_sum += criterion(val_predictions, val_batch_outputs).item()
                 val_num_batches += 1

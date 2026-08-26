@@ -1,5 +1,7 @@
 """Data loading helpers for parallel MCAP processing."""
 
+import hashlib
+import os
 from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
@@ -159,6 +161,38 @@ def _process_mcap_dataframe(mcap_file_path: str, freq: int) -> pd.DataFrame:
     return data_df_extrapolated
 
 
+def _dataframe_cache_path(mcap_file_path: str, freq: int, cache_dir: str) -> str:
+    """Return the parquet cache path for a processed MCAP DataFrame.
+
+    The cache key includes the absolute file path, file modification time, and
+    target frequency so that editing or moving a source MCAP invalidates the
+    cached copy.
+    """
+    mcap_file_path = os.path.abspath(mcap_file_path)
+    mtime = os.path.getmtime(mcap_file_path)
+    key = hashlib.sha256(f"{mcap_file_path}:{mtime}:{freq}".encode()).hexdigest()[:16]
+    base = os.path.splitext(os.path.basename(mcap_file_path))[0]
+    safe_base = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in base)
+    return os.path.join(cache_dir, f"{safe_base}_{key}.parquet")
+
+
+def _load_or_process_dataframe(mcap_file_path: str, freq: int, cache_dir: str) -> pd.DataFrame:
+    """Load a processed DataFrame from cache or process and cache it."""
+    cache_path = _dataframe_cache_path(mcap_file_path, freq, cache_dir)
+    if os.path.isfile(cache_path):
+        return pd.read_parquet(cache_path)
+
+    df = _process_mcap_dataframe(mcap_file_path, freq)
+    os.makedirs(cache_dir, exist_ok=True)
+    df.to_parquet(cache_path)
+    return df
+
+
+def _load_or_process_dataframe_kwargs(kwargs: dict) -> pd.DataFrame:
+    """Unpackable wrapper for ProcessPoolExecutor."""
+    return _load_or_process_dataframe(kwargs["mcap_file_path"], kwargs["freq"], kwargs["cache_dir"])
+
+
 def load_mcap_dataframes_parallel(
     mcap_file_paths: list[str],
     freq: int,
@@ -188,6 +222,53 @@ def load_mcap_dataframes_parallel(
                     [freq] * len(mcap_file_paths),
                 )
             )
+    finally:
+        torch.set_num_threads(torch_threads)
+
+    return dfs
+
+
+def load_mcap_dataframes_parallel_cached(
+    mcap_file_paths: list[str],
+    freq: int,
+    cache_dir: str = "/workspace/data/cache/processed_dataframes",
+    max_workers: int | None = None,
+) -> list[pd.DataFrame]:
+    """Load and process multiple MCAP files, caching processed DataFrames on disk.
+
+    The first call for a given file parses the MCAP, extrapolates, and writes a
+    parquet cache. Subsequent calls (including separate agent processes) load
+    directly from the cache. The cache is invalidated automatically when the
+    source MCAP file is modified.
+
+    Args:
+        mcap_file_paths: List of paths to input MCAP files.
+        freq: Target resampling frequency in Hz.
+        cache_dir: Directory where parquet cache files are stored.
+        max_workers: Maximum number of parallel workers. None uses all CPUs.
+
+    Returns:
+        List of processed DataFrames, one per input file.
+    """
+    os.makedirs(cache_dir, exist_ok=True)
+
+    kwargs_list = [
+        {
+            "mcap_file_path": path,
+            "freq": freq,
+            "cache_dir": cache_dir,
+        }
+        for path in mcap_file_paths
+    ]
+
+    # Limit PyTorch to a single CPU thread before forking. PyTorch's internal
+    # thread pools are not fork-safe and can deadlock in worker processes.
+    # The original value is restored after loading.
+    torch_threads = torch.get_num_threads()
+    torch.set_num_threads(1)
+    try:
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            dfs = list(executor.map(_load_or_process_dataframe_kwargs, kwargs_list))
     finally:
         torch.set_num_threads(torch_threads)
 

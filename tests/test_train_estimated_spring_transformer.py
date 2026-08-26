@@ -363,3 +363,56 @@ def test_spring_transformer_force_estimator_stride_rate():
     # Call 2 is a spring sample again: buffer should update to input_b.
     _ = model(input_b)
     assert torch.allclose(model.spring_buffer[0, -1, :], input_b[0, -1, :])
+
+
+def test_transformer_default_activation_is_relu():
+    device = torch.device("cpu")
+    model = TorchTransformerModel(
+        input_size=2,
+        output_size=1,
+        num_layers=1,
+        history_size=10,
+        num_heads=2,
+        hidden_dim=16,
+        device=device,
+    )
+    x = torch.randn(2, 10, 2)
+    out = model(x)
+    assert out.shape == (2, 1, 1)
+
+
+def test_transformer_supports_different_activations():
+    device = torch.device("cpu")
+    for activation in ["relu", "tanh", "gelu", "leaky_relu", "elu", "silu"]:
+        model = TorchTransformerModel(
+            input_size=2,
+            output_size=1,
+            num_layers=1,
+            history_size=10,
+            num_heads=2,
+            hidden_dim=16,
+            device=device,
+            activation=activation,
+        )
+        x = torch.randn(2, 10, 2)
+        out = model(x)
+        assert out.shape == (2, 1, 1), f"Unexpected output shape for {activation}"
+
+
+def test_transformer_raises_on_invalid_activation():
+    device = torch.device("cpu")
+    try:
+        TorchTransformerModel(
+            input_size=2,
+            output_size=1,
+            num_layers=1,
+            history_size=10,
+            num_heads=2,
+            hidden_dim=16,
+            device=device,
+            activation="not_an_activation",
+        )
+    except ValueError as e:
+        assert "Unsupported activation" in str(e)
+    else:
+        raise AssertionError("Expected ValueError for invalid activation")

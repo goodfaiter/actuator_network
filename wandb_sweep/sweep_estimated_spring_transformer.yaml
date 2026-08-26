@@ -1,0 +1,91 @@
+program: src/actuator_network/train_estimated_spring_transformer.py
+method: bayes
+metric:
+  name: val_loss
+  goal: minimize
+parameters:
+  # ------------------------------- Fixed parameters -------------------------------
+  accumulation_steps:
+    value: 1
+  batch_size:
+    value: 1024
+  data_freq:
+    value: 200
+  max_grad_norm:
+    value: 1
+  num_epochs:
+    value: 15
+  prediction:
+    value: false
+  spring_alpha:
+    value: 0.1
+  val_fraction:
+    value: 0.2
+  velocity_threshold:
+    value: 0.5
+  weight_decay:
+    value: 1.0e-5
+
+  # ---------------------------- Searched parameters -----------------------------
+  aux_weight:
+    distribution: uniform
+    min: 0.1
+    max: 1.0
+  force_activation:
+    values: [relu, tanh, gelu, leaky_relu, elu, silu]
+  force_dropout:
+    distribution: uniform
+    min: 0.0
+    max: 0.3
+  force_hidden_dim_per_head:
+    distribution: int_uniform
+    min: 8
+    max: 16
+  force_history_size:
+    distribution: int_uniform
+    min: 50
+    max: 200
+  force_num_heads:
+    values: [2, 4, 8]
+  force_num_layers:
+    distribution: int_uniform
+    min: 1
+    max: 4
+  force_stride:
+    distribution: int_uniform
+    min: 1
+    max: 4
+  input_noise_std:
+    distribution: uniform
+    min: 0.0
+    max: 0.05
+  learning_rate:
+    distribution: log_uniform_values
+    min: 0.0001
+    max: 0.01
+  scheduler_type:
+    values: [none, cosine, step]
+  spring_activation:
+    values: [relu, tanh, gelu, leaky_relu, elu, silu]
+  spring_dropout:
+    distribution: uniform
+    min: 0.0
+    max: 0.3
+  spring_hidden_dim_per_head:
+    distribution: int_uniform
+    min: 8
+    max: 16
+  spring_history_size:
+    distribution: int_uniform
+    min: 50
+    max: 600
+  spring_num_heads:
+    values: [2, 4, 8]
+  spring_num_layers:
+    distribution: int_uniform
+    min: 1
+    max: 4
+  spring_stride_multiplier:
+    distribution: int_uniform
+    min: 1
+    max: 4
