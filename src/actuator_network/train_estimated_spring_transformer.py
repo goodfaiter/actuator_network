@@ -18,8 +18,6 @@ from actuator_network.helpers.pandas_to_mcap import data_df_to_mcap
 from actuator_network.helpers.pandas_to_torch import (
     normalize_tensor,
     pandas_to_torch,
-    process_inputs_time_series,
-    process_outputs_time_series,
 )
 from actuator_network.helpers.torch_model import (
     SpringForceTrainingModel,
@@ -63,11 +61,62 @@ def _build_frozen_spring_windows(
     return spring_windows
 
 
+def _build_aligned_windows(
+    data: torch.Tensor,
+    spring_history_size: int,
+    force_history_size: int,
+    spring_stride: int,
+    force_stride: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build spring and force windows aligned to the same end timestep.
+
+    Both windows end at the same raw index, but each window samples backward at
+    its own stride. This is necessary because the two transformers may use
+    different history lengths and different strides.
+
+    Args:
+        data: Input tensor of shape ``(batch_size, feature_dim)``.
+        spring_history_size: Length of the spring transformer's input window.
+        force_history_size: Length of the force transformer's input window.
+        spring_stride: Stride between spring history samples.
+        force_stride: Stride between force history samples.
+
+    Returns:
+        Tuple of ``(spring_windows, force_windows)`` with shapes
+        ``(num_sequences, spring_history_size, feature_dim)`` and
+        ``(num_sequences, force_history_size, feature_dim)``.
+    """
+    batch_size, feature_dim = data.shape
+    max_start = max((spring_history_size - 1) * spring_stride, (force_history_size - 1) * force_stride)
+    num_sequences = batch_size - max_start
+    if num_sequences <= 0:
+        empty_shape_spring = (0, spring_history_size, feature_dim)
+        empty_shape_force = (0, force_history_size, feature_dim)
+        return torch.empty(empty_shape_spring, device=data.device), torch.empty(empty_shape_force, device=data.device)
+
+    end_indices = torch.arange(num_sequences, device=data.device) + max_start
+
+    spring_offsets = (
+        torch.arange(spring_history_size, device=data.device) * spring_stride
+        - (spring_history_size - 1) * spring_stride
+    )
+    spring_indices = end_indices.unsqueeze(1) + spring_offsets.unsqueeze(0)
+
+    force_offsets = (
+        torch.arange(force_history_size, device=data.device) * force_stride - (force_history_size - 1) * force_stride
+    )
+    force_indices = end_indices.unsqueeze(1) + force_offsets.unsqueeze(0)
+
+    return data[spring_indices], data[force_indices]
+
+
 def build_estimated_spring_dataset(
     dataframes: list[pd.DataFrame],
     file_labels: list[tuple[str, float]],
+    spring_history_size: int,
     history_size: int,
-    stride: int,
+    spring_stride: int,
+    force_stride: int,
     prediction: bool,
     velocity_threshold: float,
     device: torch.device,
@@ -79,9 +128,11 @@ def build_estimated_spring_dataset(
         file_labels: List of ``(mcap_path, spring_coefficient)`` pairs. The spring
             coefficient is a continuous label (e.g., 0.0 = weak, 0.5 = finger,
             1.0 = strong).
-        history_size: Length of each input window.
-        stride: Stride between consecutive windows.
-        prediction: Whether to shift outputs for prediction mode.
+        spring_history_size: Length of the spring transformer's input window.
+        history_size: Length of the force transformer's input window.
+        spring_stride: Stride between spring history samples.
+        force_stride: Stride between force history samples.
+        prediction: Whether to shift outputs for prediction mode (currently unused).
         velocity_threshold: Velocity magnitude below which the spring buffer freezes.
         device: Torch device to place tensors on.
 
@@ -104,31 +155,32 @@ def build_estimated_spring_dataset(
         spring_idx = col_names.index(SPRING_COL)
 
         features = data_tensor[:, input_indices]
-        normal_windows = process_inputs_time_series(
+        spring_windows, force_windows = _build_aligned_windows(
             features,
-            history_size=history_size,
-            stride=stride,
-            prediction=prediction,
+            spring_history_size=spring_history_size,
+            force_history_size=history_size,
+            spring_stride=spring_stride,
+            force_stride=force_stride,
         )
         spring_windows = _build_frozen_spring_windows(
-            normal_windows,
+            spring_windows,
             velocity_idx=velocity_idx,
             velocity_threshold=velocity_threshold,
         )
 
-        spring_targets = process_outputs_time_series(
-            data_tensor[:, spring_idx].unsqueeze(1),
-            stride=stride,
-            history_size=history_size,
-        )
-        force_targets = process_outputs_time_series(
-            data_tensor[:, output_idx].unsqueeze(1),
-            stride=stride,
-            history_size=history_size,
-        )
+        # Targets correspond to the shared end timestep of the aligned windows.
+        max_start = max((spring_history_size - 1) * spring_stride, (history_size - 1) * force_stride)
+        num_sequences = data_tensor.size(0) - max_start
+        if num_sequences > 0:
+            target_index = torch.arange(num_sequences, device=data_tensor.device) + max_start
+            spring_targets = data_tensor[target_index, spring_idx].unsqueeze(1).unsqueeze(1)
+            force_targets = data_tensor[target_index, output_idx].unsqueeze(1).unsqueeze(1)
+        else:
+            spring_targets = torch.empty((0, 1, 1), device=data_tensor.device)
+            force_targets = torch.empty((0, 1, 1), device=data_tensor.device)
 
         all_spring_windows.append(spring_windows)
-        all_force_windows.append(normal_windows)
+        all_force_windows.append(force_windows)
         all_spring_targets.append(spring_targets)
         all_force_targets.append(force_targets)
 
@@ -160,14 +212,38 @@ def make_spring_force_loss(aux_weight: float = 1.0):
     return loss_fn
 
 
+def make_input_noise_transform(noise_std: float):
+    """Return a transform that adds Gaussian noise to normalized inputs.
+
+    The transform accepts either a single tensor or a tuple of tensors and
+    returns the same structure. Noise is sampled independently for every call,
+    so the model sees different perturbations each epoch.
+
+    Args:
+        noise_std: Standard deviation of the additive Gaussian noise.
+
+    Returns:
+        Callable that adds noise to tensor(s).
+    """
+
+    def transform(inputs):
+        if isinstance(inputs, tuple):
+            return tuple(inp + torch.randn_like(inp) * noise_std for inp in inputs)
+        return inputs + torch.randn_like(inputs) * noise_std
+
+    return transform
+
+
 def main():
     # Configuration.
     data_freq = 200
     stride = 2
+    spring_stride = 4
     inference_freq = data_freq // stride
     prediction = False
+    spring_history_size = 600
     history_size = 150
-    velocity_threshold = 0.25
+    velocity_threshold = 0.5
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     output_cols = [OUTPUT_COL, SPRING_COL]
 
@@ -187,9 +263,16 @@ def main():
     aux_weight = 1.0
     num_epochs = 50
     learning_rate = 0.001
-    batch_size = 1024
+    batch_size = 512
+    accumulation_steps = 2  # effective batch size = batch_size * accumulation_steps
     train_ratio = 0.9
     spring_alpha = 0.05
+    spring_dropout = 0.2
+    force_dropout = 0.1
+    input_noise_std = 0.01
+    weight_decay = 1e-5
+    scheduler_type = "cosine"
+    max_grad_norm = 1.0
 
     print("Loading and processing MCAP files...")
     dataframes = load_mcap_dataframes_parallel([path for path, _ in mcap_files], freq=data_freq)
@@ -200,8 +283,10 @@ def main():
     spring_windows, force_windows, spring_targets, force_targets = build_estimated_spring_dataset(
         dataframes,
         mcap_files,
+        spring_history_size=spring_history_size,
         history_size=history_size,
-        stride=stride,
+        spring_stride=spring_stride,
+        force_stride=stride,
         prediction=prediction,
         velocity_threshold=velocity_threshold,
         device=device,
@@ -214,9 +299,10 @@ def main():
     force_targets_norm, force_output_mean, force_output_std = normalize_tensor(force_targets)
 
     # Package inputs/outputs for the shared trainer.
-    # combined_inputs: [N, 2, History, Feature] where dim 1 slices are [spring_window, force_window].
+    # combined_inputs: tuple of (spring_windows, force_windows) because the two
+    # transformers may use different history lengths.
     # combined_targets: [N, 1, 2] with channels [force, spring].
-    combined_inputs = torch.stack([spring_windows_norm, force_windows_norm], dim=1)
+    combined_inputs = (spring_windows_norm, force_windows_norm)
     combined_targets = torch.cat([force_targets_norm, spring_targets_norm], dim=-1)
 
     # Create transformers with sizes derived from the data.
@@ -224,10 +310,11 @@ def main():
         input_size=spring_windows.shape[-1],
         output_size=spring_targets.shape[-1],
         num_layers=2,
-        history_size=history_size,
+        history_size=spring_history_size,
         num_heads=2,
         hidden_dim=32,
         device=device,
+        dropout=spring_dropout,
     )
     force_transformer = TorchTransformerModel(
         input_size=force_windows.shape[-1] + spring_targets.shape[-1],
@@ -237,6 +324,7 @@ def main():
         num_heads=2,
         hidden_dim=32,
         device=device,
+        dropout=force_dropout,
     )
 
     training_model = SpringForceTrainingModel(
@@ -255,6 +343,8 @@ def main():
         velocity_idx=INPUT_COLS.index("measured_velocity_rad_per_sec_data"),
         velocity_threshold=velocity_threshold,
         spring_alpha=spring_alpha,
+        spring_stride=spring_stride,
+        force_stride=stride,
     ).to(device)
 
     # Output stats are per-channel: force uses force output stats, spring uses spring output stats.
@@ -270,6 +360,8 @@ def main():
         frequency=inference_freq,
         history_size=history_size,
         stride=stride,
+        spring_stride=spring_stride,
+        spring_history_size=spring_history_size,
         prediction=prediction,
         input_columns=INPUT_COLS,
         output_columns=output_cols,
@@ -287,6 +379,11 @@ def main():
         learning_rate=learning_rate,
         batch_size=batch_size,
         train_ratio=train_ratio,
+        weight_decay=weight_decay,
+        scheduler_type=scheduler_type,
+        max_grad_norm=max_grad_norm,
+        input_transform=make_input_noise_transform(input_noise_std),
+        accumulation_steps=accumulation_steps,
     )
 
 
