@@ -8,24 +8,24 @@ def test_defaults_match_expected_values():
     config = EstimatedSpringTransformerConfig.defaults()
     assert config.num_epochs == 50
     assert config.learning_rate == 0.001
-    assert config.batch_size == 512
-    assert config.spring_history_size == 600
+    assert config.batch_size == 1024
+    assert config.spring_history_size == 200
     assert config.spring_stride == 4
     assert config.force_history_size == 150
     assert config.force_stride == 2
-    assert config.spring_num_layers == 2
-    assert config.spring_num_heads == 2
+    assert config.spring_num_layers == 1
+    assert config.spring_num_heads == 1
     assert config.spring_hidden_dim == 32
     assert config.spring_activation == "relu"
-    assert config.force_num_layers == 2
-    assert config.force_num_heads == 2
+    assert config.force_num_layers == 1
+    assert config.force_num_heads == 1
     assert config.force_hidden_dim == 32
     assert config.force_activation == "relu"
     assert config.val_fraction == 0.2
 
 
-def test_is_valid_requires_divisible_heads():
-    """Valid configs require hidden_dim to be divisible by num_heads for both transformers."""
+def test_is_valid_requires_divisible_heads_and_even_dim():
+    """Valid configs require hidden_dim to be divisible by num_heads and even."""
     assert EstimatedSpringTransformerConfig(
         spring_hidden_dim=32, spring_num_heads=4, force_hidden_dim=64, force_num_heads=8
     ).is_valid()
@@ -34,6 +34,13 @@ def test_is_valid_requires_divisible_heads():
     ).is_valid()
     assert not EstimatedSpringTransformerConfig(
         spring_hidden_dim=32, spring_num_heads=4, force_hidden_dim=64, force_num_heads=6
+    ).is_valid()
+    # Odd hidden_dim values are rejected even when divisible by num_heads.
+    assert not EstimatedSpringTransformerConfig(
+        spring_hidden_dim=33, spring_num_heads=1, force_hidden_dim=64, force_num_heads=8
+    ).is_valid()
+    assert not EstimatedSpringTransformerConfig(
+        spring_hidden_dim=32, spring_num_heads=4, force_hidden_dim=21, force_num_heads=1
     ).is_valid()
 
 
@@ -56,7 +63,7 @@ def test_from_wandb_config_applies_overrides():
     assert config.batch_size == 1024
     assert config.spring_num_layers == 3
     # Unspecified fields remain at their default.
-    assert config.spring_history_size == 600
+    assert config.spring_history_size == 200
 
 
 def test_from_wandb_config_reparameterizes_hidden_dim():
