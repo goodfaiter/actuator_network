@@ -29,8 +29,7 @@ from actuator_network.helpers.pandas_to_torch import (
 )
 from actuator_network.helpers.torch_model import (
     SpringCoefficientHead,
-    SpringForceTrainingModel,
-    SpringTransformerForceEstimator,
+    SpringTransformerModel,
     TorchTransformerModel,
 )
 from actuator_network.helpers.trainer import train
@@ -47,14 +46,18 @@ SPRING_COL = "spring_coeff"
 def _build_frozen_spring_windows(
     normal_windows: torch.Tensor,
     velocity_idx: int,
-    velocity_threshold: float,
+    threshold_lo: float,
+    threshold_hi: float,
 ) -> torch.Tensor:
-    """Build spring windows where the buffer is frozen while |velocity| <= threshold.
+    """Build spring windows where the buffer is frozen while the velocity stays within bounds.
 
     Args:
-        normal_windows: Sliding windows of shape [N, H, F].
+        normal_windows: Normalized sliding windows of shape [N, H, F].
         velocity_idx: Index of the velocity channel.
-        velocity_threshold: Velocity magnitude below which  the buffer freezes.
+        threshold_lo: Normalized lower threshold bound; the buffer updates when the
+            velocity falls below it.
+        threshold_hi: Normalized upper threshold bound; the buffer updates when the
+            velocity rises above it.
 
     Returns:
         Spring windows of the same shape as ``normal_windows``.
@@ -64,7 +67,8 @@ def _build_frozen_spring_windows(
     last_moving_window = torch.zeros_like(normal_windows[0])
 
     for i in range(num_samples):
-        if torch.abs(normal_windows[i, -1, velocity_idx]) > velocity_threshold:
+        velocity = normal_windows[i, -1, velocity_idx]
+        if (velocity > threshold_hi) | (velocity < threshold_lo):
             last_moving_window = normal_windows[i].clone()
         spring_windows[i] = last_moving_window
 
@@ -127,6 +131,56 @@ def _build_aligned_windows(
     return spring_windows, force_windows
 
 
+def compute_estimated_spring_dataset_stats(
+    dataframes: list[pd.DataFrame],
+    file_labels: list[tuple[str, float]],
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Compute global normalization statistics over all concrete samples.
+
+    The spring coefficient column is temporarily added to each DataFrame so the
+    per-file constant label can be used as a target.
+
+    Args:
+        dataframes: Processed DataFrames, one per MCAP file.
+        file_labels: List of ``(mcap_path, spring_coefficient)`` pairs.
+
+    Returns:
+        Tuple of (input_mean, input_std, force_output_mean, force_output_std,
+        spring_output_mean, spring_output_std) computed over the concatenation
+        of all files' concrete samples (padding excluded).
+    """
+    all_features = []
+    all_force_targets = []
+    all_spring_targets = []
+
+    for df, (_, spring_label) in zip(dataframes, file_labels):
+        df[SPRING_COL] = spring_label
+
+        col_names, data_tensor = pandas_to_torch(df, device="cpu")
+        input_indices = [col_names.index(col) for col in INPUT_COLS]
+        output_idx = col_names.index(OUTPUT_COL)
+        spring_idx = col_names.index(SPRING_COL)
+        num_samples = data_tensor.size(0)
+        target_index = torch.arange(num_samples, device=data_tensor.device)
+
+        all_features.append(data_tensor[:, input_indices])
+        all_force_targets.append(data_tensor[target_index, output_idx].unsqueeze(1).unsqueeze(1))
+        all_spring_targets.append(data_tensor[target_index, spring_idx].unsqueeze(1).unsqueeze(1))
+
+    _, input_mean, input_std = normalize_tensor(torch.cat(all_features, dim=0))
+    _, force_output_mean, force_output_std = normalize_tensor(torch.cat(all_force_targets, dim=0))
+    _, spring_output_mean, spring_output_std = normalize_tensor(torch.cat(all_spring_targets, dim=0))
+
+    return (
+        input_mean,
+        input_std,
+        force_output_mean,
+        force_output_std,
+        spring_output_mean,
+        spring_output_std,
+    )
+
+
 def build_estimated_spring_dataset(
     dataframes: list[pd.DataFrame],
     file_labels: list[tuple[str, float]],
@@ -134,11 +188,15 @@ def build_estimated_spring_dataset(
     history_size: int,
     spring_stride: int,
     force_stride: int,
-    prediction: bool,
-    velocity_threshold: float,
+    velocity_bounds: tuple[float, float],
+    stats: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Build frozen spring windows, normal force windows, spring targets, and force targets.
+    """Build normalized frozen spring windows, force windows, and targets.
+
+    The features are normalized before the aligned windows are built, so the
+    zero padding lands on exact zeros in the normalized domain (matching the
+    zero-initialized spring buffer of the deployable estimator).
 
     Args:
         dataframes: Processed DataFrames, one per MCAP file.
@@ -149,19 +207,23 @@ def build_estimated_spring_dataset(
         history_size: Length of the force transformer's input window.
         spring_stride: Stride between spring history samples.
         force_stride: Stride between force history samples.
-        prediction: Whether to shift outputs for prediction mode (currently unused).
-        velocity_threshold: Velocity magnitude below which the spring buffer freezes.
+        velocity_bounds: Normalized-domain ``(threshold_lo, threshold_hi)`` outside
+            which the spring buffer updates.
+        stats: Normalization statistics from
+            :func:`compute_estimated_spring_dataset_stats` (training set stats;
+            pass the same stats for validation).
         device: Torch device to place tensors on.
 
     Returns:
         Tuple of (spring_windows, force_windows, spring_targets, force_targets).
     """
+    velocity_idx = INPUT_COLS.index("measured_velocity_rad_per_sec_data")
+    input_mean, input_std, force_output_mean, force_output_std, spring_output_mean, spring_output_std = stats
+
     all_spring_windows = []
     all_force_windows = []
     all_spring_targets = []
     all_force_targets = []
-
-    velocity_idx = INPUT_COLS.index("measured_velocity_rad_per_sec_data")
 
     for df, (_, spring_label) in zip(dataframes, file_labels):
         df[SPRING_COL] = spring_label
@@ -171,7 +233,7 @@ def build_estimated_spring_dataset(
         output_idx = col_names.index(OUTPUT_COL)
         spring_idx = col_names.index(SPRING_COL)
 
-        features = data_tensor[:, input_indices]
+        features = apply_normalization(data_tensor[:, input_indices], input_mean, input_std)
         spring_windows, force_windows = _build_aligned_windows(
             features,
             spring_history_size=spring_history_size,
@@ -182,15 +244,24 @@ def build_estimated_spring_dataset(
         spring_windows = _build_frozen_spring_windows(
             spring_windows,
             velocity_idx=velocity_idx,
-            velocity_threshold=velocity_threshold,
+            threshold_lo=velocity_bounds[0],
+            threshold_hi=velocity_bounds[1],
         )
 
         # Targets correspond to the shared end timestep of each aligned window.
         # With zero-padding we now have one window per sample.
         num_sequences = data_tensor.size(0)
         target_index = torch.arange(num_sequences, device=data_tensor.device)
-        spring_targets = data_tensor[target_index, spring_idx].unsqueeze(1).unsqueeze(1)
-        force_targets = data_tensor[target_index, output_idx].unsqueeze(1).unsqueeze(1)
+        spring_targets = apply_normalization(
+            data_tensor[target_index, spring_idx].unsqueeze(1).unsqueeze(1),
+            spring_output_mean,
+            spring_output_std,
+        )
+        force_targets = apply_normalization(
+            data_tensor[target_index, output_idx].unsqueeze(1).unsqueeze(1),
+            force_output_mean,
+            force_output_std,
+        )
 
         all_spring_windows.append(spring_windows)
         all_force_windows.append(force_windows)
@@ -270,6 +341,16 @@ def train_estimated_spring_transformer(
     inference_freq = config.data_freq // config.force_stride
     output_cols = [OUTPUT_COL, SPRING_COL]
 
+    print("Computing training dataset statistics...")
+    stats = compute_estimated_spring_dataset_stats(train_dataframes, mcap_files)
+    input_mean, input_std, force_output_mean, force_output_std, spring_output_mean, spring_output_std = stats
+
+    velocity_idx = INPUT_COLS.index("measured_velocity_rad_per_sec_data")
+    velocity_mean = float(input_mean.view(-1)[velocity_idx])
+    velocity_std = float(input_std.view(-1)[velocity_idx])
+    threshold = config.velocity_threshold
+    velocity_bounds = ((-threshold - velocity_mean) / velocity_std, (threshold - velocity_mean) / velocity_std)
+
     print(
         "Building spring/force training dataset ("
         f"spring_history_size={config.spring_history_size}, spring_stride={config.spring_stride}, "
@@ -283,8 +364,8 @@ def train_estimated_spring_transformer(
             history_size=config.force_history_size,
             spring_stride=config.spring_stride,
             force_stride=config.force_stride,
-            prediction=config.prediction,
-            velocity_threshold=config.velocity_threshold,
+            velocity_bounds=velocity_bounds,
+            stats=stats,
             device=device,
         )
     )
@@ -297,30 +378,21 @@ def train_estimated_spring_transformer(
         history_size=config.force_history_size,
         spring_stride=config.spring_stride,
         force_stride=config.force_stride,
-        prediction=config.prediction,
-        velocity_threshold=config.velocity_threshold,
+        velocity_bounds=velocity_bounds,
+        stats=stats,
         device=device,
     )
 
-    # Normalize inputs and targets using training statistics only.
-    spring_windows_norm, spring_input_mean, spring_input_std = normalize_tensor(train_spring_windows)
-    spring_targets_norm, spring_output_mean, spring_output_std = normalize_tensor(train_spring_targets)
-    force_windows_norm, force_input_base_mean, force_input_base_std = normalize_tensor(train_force_windows)
-    force_targets_norm, force_output_mean, force_output_std = normalize_tensor(train_force_targets)
-
-    val_spring_windows_norm = apply_normalization(val_spring_windows, spring_input_mean, spring_input_std)
-    val_spring_targets_norm = apply_normalization(val_spring_targets, spring_output_mean, spring_output_std)
-    val_force_windows_norm = apply_normalization(val_force_windows, force_input_base_mean, force_input_base_std)
-    val_force_targets_norm = apply_normalization(val_force_targets, force_output_mean, force_output_std)
-
+    # The windows/targets are already normalized with the training statistics;
+    # the zero padding lands on exact zeros in the normalized domain.
     # Package inputs/outputs for the shared trainer.
     # combined_inputs: tuple of (spring_windows, force_windows) because the two
     # transformers may use different history lengths.
     # combined_targets: [N, 1, 2] with channels [force, spring].
-    combined_inputs = (spring_windows_norm, force_windows_norm)
-    combined_targets = torch.cat([force_targets_norm, spring_targets_norm], dim=-1)
-    val_combined_inputs = (val_spring_windows_norm, val_force_windows_norm)
-    val_combined_targets = torch.cat([val_force_targets_norm, val_spring_targets_norm], dim=-1)
+    combined_inputs = (train_spring_windows, train_force_windows)
+    combined_targets = torch.cat([train_force_targets, train_spring_targets], dim=-1)
+    val_combined_inputs = (val_spring_windows, val_force_windows)
+    val_combined_targets = torch.cat([val_force_targets, val_spring_targets], dim=-1)
 
     # Create transformers with sizes derived from the data.
     model_transformer = TorchTransformerModel(
@@ -350,25 +422,16 @@ def train_estimated_spring_transformer(
         device=device,
     )
 
-    training_model = SpringForceTrainingModel(
+    # One instance serves both the batched teacher-forced training path and the
+    # stateful online path, so training updates the exported model's weights.
+    deployable_model = SpringTransformerModel(
         model_transformer=model_transformer,
         force_transformer=force_transformer,
         spring_coeff_head=spring_coeff_head,
         latent_dim=config.spring_latent_dim,
-    ).to(device)
-
-    # Assemble deployable model.
-    deployable_model = SpringTransformerForceEstimator(
-        model_transformer=model_transformer,
-        force_transformer=force_transformer,
-        spring_coeff_head=spring_coeff_head,
-        latent_dim=config.spring_latent_dim,
-        input_mean=force_input_base_mean,
-        input_std=force_input_base_std,
-        spring_input_mean=spring_input_mean,
-        spring_input_std=spring_input_std,
-        velocity_idx=INPUT_COLS.index("measured_velocity_rad_per_sec_data"),
-        velocity_threshold=config.velocity_threshold,
+        velocity_idx=velocity_idx,
+        velocity_threshold_lo=velocity_bounds[0],
+        velocity_threshold_hi=velocity_bounds[1],
         spring_alpha=config.spring_alpha,
         spring_stride=config.spring_stride,
         force_stride=config.force_stride,
@@ -380,8 +443,8 @@ def train_estimated_spring_transformer(
 
     wrapped_model = ScaledModelWrapper(
         deployable_model,
-        force_input_base_mean,
-        force_input_base_std,
+        input_mean,
+        input_std,
         combined_output_mean,
         combined_output_std,
         frequency=inference_freq,
@@ -393,7 +456,7 @@ def train_estimated_spring_transformer(
     model_saver = ModelSaver(wrapped_model, OUTPUT_DIR)
 
     train(
-        training_model,
+        deployable_model,
         combined_inputs,
         combined_targets,
         val_combined_inputs,
