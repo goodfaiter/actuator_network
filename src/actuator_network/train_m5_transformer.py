@@ -7,6 +7,7 @@ import torch
 
 import wandb
 from actuator_network.helpers.data_pipeline import load_mcap_files_parallel
+from actuator_network.helpers.hyperparameters import M5TransformerConfig
 from actuator_network.helpers.m5_model import M5FrictionModel
 from actuator_network.helpers.pandas_to_torch import apply_normalization, normalize_tensor
 from actuator_network.helpers.torch_model import M5TransformerPhysicsModel, TorchTransformerModel
@@ -14,8 +15,9 @@ from actuator_network.helpers.trainer import data_generator
 from actuator_network.helpers.wrapper import ModelSaver, ScaledModelWrapper
 
 M5_PARAMS_PATH = "/workspace/data/output_data/m5_friction_params.json"
-MOTOR_GAIN = 4.2
+MOTOR_GAIN_DEFAULT = 4.2
 OUTPUT_DIR = "/workspace/data/output_data/"
+DEFAULT_WANDB_PROJECT = "actuator_network"
 
 
 def load_m5_model(
@@ -43,7 +45,7 @@ def load_m5_model(
     with open(params_path) as f:
         params = json.load(f)
 
-    motor_gain = params.get("motor_gain", MOTOR_GAIN)
+    motor_gain = params.get("motor_gain", MOTOR_GAIN_DEFAULT)
     model = M5FrictionModel(motor_gain=motor_gain, trainable_motor_gain=motor_gain_trainable).to(device)
     model.set_physical_parameters(params)
     model.set_friction_trainable(trainable)
@@ -55,6 +57,7 @@ def load_m5_model(
 
 
 def train_m5_transformer(
+    config: M5TransformerConfig,
     model: M5TransformerPhysicsModel,
     inputs: torch.Tensor,
     outputs: torch.Tensor,
@@ -62,16 +65,11 @@ def train_m5_transformer(
     val_outputs: torch.Tensor,
     model_saver: ModelSaver,
     latest_prefix: str = "",
-    aux_weight: float = 0.1,
-    max_grad_norm: float = 1.0,
-    num_epochs: int = 50,
-    learning_rate: float = 0.001,
-    batch_size: int = 1024,
-    val_fraction: float = 1.0,
 ) -> None:
     """Train the combined M5 + Transformer model with an auxiliary loss and gradient clipping.
 
     Args:
+        config: Hyperparameter configuration.
         model: The combined M5 + Transformer model to train.
         inputs: Normalized input tensor of shape (num_samples, history_size, input_dim).
         outputs: Normalized target tensor of shape (num_samples, 1, output_dim).
@@ -79,36 +77,16 @@ def train_m5_transformer(
         val_outputs: Normalized validation target tensor.
         model_saver: ModelSaver instance for checkpointing.
         latest_prefix: Prefix inserted before "best_"/"final_" in latest checkpoint names.
-        aux_weight: Weight for the auxiliary MSE loss on the Transformer's tau_external prediction.
-        max_grad_norm: Maximum gradient norm for clipping.
-        num_epochs: Number of training epochs.
-        learning_rate: Adam learning rate.
-        batch_size: Training batch size.
-        val_fraction: Fraction of the validation set to use each epoch. The subset
-            is randomly sampled once at the start of training to save time.
     """
-    wandb.init(project="actuator_network")
-    wandb.config.update(
-        {
-            "learning_rate": learning_rate,
-            "batch_size": batch_size,
-            "num_epochs": num_epochs,
-            "val_fraction": val_fraction,
-            "aux_weight": aux_weight,
-            "max_grad_norm": max_grad_norm,
-            "m5_trainable": model.m5.K_v_log.requires_grad,
-            "motor_gain_trainable": model.m5.motor_gain_log.requires_grad,
-        }
-    )
     wandb.log({"Model": str(model)})
 
     criterion = torch.nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
 
     # Compute a single fixed random validation subset to save time.
     num_val_samples = val_inputs.shape[0]
-    if val_fraction < 1.0 and num_val_samples > 0:
-        subset_size = max(1, int(num_val_samples * val_fraction))
+    if config.val_fraction < 1.0 and num_val_samples > 0:
+        subset_size = max(1, int(num_val_samples * config.val_fraction))
         val_indices = torch.randperm(num_val_samples)[:subset_size]
         val_inputs_subset = val_inputs[val_indices]
         val_outputs_subset = val_outputs[val_indices]
@@ -118,7 +96,7 @@ def train_m5_transformer(
 
     best_val_loss = float("inf")
 
-    for epoch in range(num_epochs):
+    for epoch in range(config.num_epochs):
         # Training phase
         model.train()
         epoch_loss = 0.0
@@ -126,7 +104,7 @@ def train_m5_transformer(
         epoch_aux_loss = 0.0
         num_batches = 0
 
-        for batch_inputs, batch_outputs in data_generator(inputs, outputs, batch_size):
+        for batch_inputs, batch_outputs in data_generator(inputs, outputs, config.batch_size):
             optimizer.zero_grad()
 
             pred = model(batch_inputs)  # [Batch, 1, 4]
@@ -134,10 +112,10 @@ def train_m5_transformer(
             # Channel 0 is the main predicted force; channel 3 is the Transformer's tau_external pred.
             final_loss = criterion(pred[:, :, 0:1], batch_outputs)
             aux_loss = criterion(pred[:, :, 3:4], batch_outputs)
-            loss = final_loss + aux_weight * aux_loss
+            loss = final_loss + config.aux_weight * aux_loss
 
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.max_grad_norm)
             optimizer.step()
 
             epoch_loss += loss.item()
@@ -156,10 +134,10 @@ def train_m5_transformer(
 
             val_final_loss = criterion(val_pred[:, :, 0:1], val_outputs_subset).item()
             val_aux_loss = criterion(val_pred[:, :, 3:4], val_outputs_subset).item()
-            val_loss = val_final_loss + aux_weight * val_aux_loss
+            val_loss = val_final_loss + config.aux_weight * val_aux_loss
 
         print(
-            f"Epoch [{epoch + 1}/{num_epochs}], "
+            f"Epoch [{epoch + 1}/{config.num_epochs}], "
             f"Train Loss: {avg_train_loss:.4f} (final={avg_train_final_loss:.4f}, aux={avg_train_aux_loss:.4f}), "
             f"Val Loss: {val_loss:.4f} (final={val_final_loss:.4f}, aux={val_aux_loss:.4f})"
         )
@@ -189,25 +167,30 @@ def train_m5_transformer(
 
     model_saver.save_model("_final")
     model_saver.save_latest(f"final_{latest_prefix}")
-    wandb.finish()
 
 
 def main():
-    # Configuration
-    data_freq = 200  # Desired frequency in Hz
-    stride = 2  # Stride between future steps (2 for 100Hz prediction from 200Hz data)
-    inference_freq = data_freq // stride  # Inference frequency in Hz
-    prediction = False  # Whether we are doing prediction or estimation
-    history_size = 150
+    if wandb.run is None:
+        wandb.init(project=DEFAULT_WANDB_PROJECT)
+
+    config = M5TransformerConfig.from_wandb_config(wandb.config)
+    print(f"Using configuration: {config}")
+
+    if not config.is_valid():
+        print(f"Skipping invalid configuration: {config}")
+        wandb.run.summary["skipped_invalid"] = True
+        wandb.finish()
+        return
+
+    wandb.config.update(
+        {
+            "m5_trainable": config.m5_trainable,
+            "motor_gain_trainable": config.motor_gain_trainable,
+        }
+    )
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    input_cols = ["delta_position_rad_data", "measured_velocity_rad_per_sec_data"]
-    output_cols = ["tendon_bota_force_newton_data"]  # Only the target exists in the training data.
-    model_output_cols = [
-        "tendon_bota_force_newton_data",
-        "tau_motor_newton_data",
-        "tau_friction_newton_data",
-        "tau_external_pred_newton_data",
-    ]
+
     mcap_file_paths = [
         "/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_03_30_0.mcap",  # finger, mixed 200Hz
         "/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_52_16_0.mcap",  # finger, mixed 200Hz
@@ -222,47 +205,37 @@ def main():
         "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_34_43_0.mcap",  # strong spring, mixed 200Hz
     ]
 
-    # Training knobs
-    m5_trainable = False  # If False, M5 friction params stay frozen.
-    motor_gain_trainable = False  # If False, motor gain P stays fixed.
-    aux_weight = 0.0
-    max_grad_norm = 1.0
-    num_epochs = 50
-    learning_rate = 0.001
-    batch_size = 1024
-    val_fraction = 1.0
-
     print("Loading M5 friction model as initial guess...")
     m5_model = load_m5_model(
         M5_PARAMS_PATH,
         device,
-        trainable=m5_trainable,
-        motor_gain_trainable=motor_gain_trainable,
+        trainable=config.m5_trainable,
+        motor_gain_trainable=config.motor_gain_trainable,
     )
-    print(f"  M5 friction params trainable: {m5_trainable}")
-    print(f"  Motor gain trainable: {motor_gain_trainable}")
+    print(f"  M5 friction params trainable: {config.m5_trainable}")
+    print(f"  Motor gain trainable: {config.motor_gain_trainable}")
 
     print("Loading and processing MCAP files...")
     train_inputs, train_outputs = load_mcap_files_parallel(
         mcap_file_paths,
-        freq=data_freq,
-        input_cols=input_cols,
-        output_cols=output_cols,
-        history_size=history_size,
-        stride=stride,
-        prediction=prediction,
+        freq=config.data_freq,
+        input_cols=config.input_cols,
+        output_cols=config.output_cols,
+        history_size=config.history_size,
+        stride=config.stride,
+        prediction=config.prediction,
     )
     train_inputs = train_inputs.to(device)
     train_outputs = train_outputs.to(device)
 
     val_inputs, val_outputs = load_mcap_files_parallel(
         val_mcap_file_paths,
-        freq=data_freq,
-        input_cols=input_cols,
-        output_cols=output_cols,
-        history_size=history_size,
-        stride=stride,
-        prediction=prediction,
+        freq=config.data_freq,
+        input_cols=config.input_cols,
+        output_cols=config.output_cols,
+        history_size=config.history_size,
+        stride=config.stride,
+        prediction=config.prediction,
     )
     val_inputs = val_inputs.to(device)
     val_outputs = val_outputs.to(device)
@@ -272,17 +245,19 @@ def main():
     val_inputs_normalized = apply_normalization(val_inputs, inputs_mean, inputs_std)
     val_outputs_normalized = apply_normalization(val_outputs, outputs_mean, outputs_std)
 
-    delta_position_idx = input_cols.index("delta_position_rad_data")
-    velocity_idx = input_cols.index("measured_velocity_rad_per_sec_data")
+    delta_position_idx = config.input_cols.index("delta_position_rad_data")
+    velocity_idx = config.input_cols.index("measured_velocity_rad_per_sec_data")
 
     transformer = TorchTransformerModel(
         input_size=inputs_normalized.shape[-1],
         output_size=outputs_normalized.shape[-1],
-        num_layers=2,
-        history_size=history_size,
-        num_heads=4,
-        hidden_dim=32,
+        num_layers=config.num_layers,
+        history_size=config.history_size,
+        num_heads=config.num_heads,
+        hidden_dim=config.hidden_dim,
         device=device,
+        dropout=config.dropout,
+        activation=config.activation,
     )
 
     combined_model = M5TransformerPhysicsModel(
@@ -302,15 +277,16 @@ def main():
         inputs_std,
         outputs_mean,
         outputs_std,
-        frequency=inference_freq,
-        history_size=history_size,
-        stride=stride,
-        prediction=prediction,
-        input_columns=input_cols,
-        output_columns=model_output_cols,
+        frequency=config.inference_freq,
+        history_size=config.history_size,
+        stride=config.stride,
+        prediction=config.prediction,
+        input_columns=config.input_cols,
+        output_columns=config.model_output_cols,
     )
     model_saver = ModelSaver(wrapped_model, OUTPUT_DIR)
     train_m5_transformer(
+        config,
         combined_model,
         inputs_normalized,
         outputs_normalized,
@@ -318,12 +294,6 @@ def main():
         val_outputs_normalized,
         model_saver=model_saver,
         latest_prefix="m5_transformer_",
-        aux_weight=aux_weight,
-        max_grad_norm=max_grad_norm,
-        num_epochs=num_epochs,
-        learning_rate=learning_rate,
-        batch_size=batch_size,
-        val_fraction=val_fraction,
     )
 
     # Save the jointly fitted M5 parameters for inspection.
@@ -333,6 +303,8 @@ def main():
         json.dump(joint_params, f, indent=2)
     print(f"Saved joint M5 parameters to {params_path}")
     print(f"  motor_gain = {joint_params['motor_gain']:.6f}")
+
+    wandb.finish()
 
 
 if __name__ == "__main__":
