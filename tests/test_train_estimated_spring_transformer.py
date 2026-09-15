@@ -3,6 +3,7 @@
 import torch
 
 from actuator_network.helpers.torch_model import (
+    SpringCoefficientHead,
     SpringForceTrainingModel,
     SpringTransformerForceEstimator,
     TorchTransformerModel,
@@ -42,10 +43,11 @@ def test_spring_force_training_model_forward():
     spring_history_size = 600
     history_size = 10
     batch_size = 4
+    latent_dim = 16
 
-    spring_transformer = TorchTransformerModel(
+    model_transformer = TorchTransformerModel(
         input_size=2,
-        output_size=1,
+        output_size=latent_dim,
         num_layers=1,
         history_size=spring_history_size,
         num_heads=2,
@@ -53,7 +55,7 @@ def test_spring_force_training_model_forward():
         device=device,
     )
     force_transformer = TorchTransformerModel(
-        input_size=3,
+        input_size=2 + latent_dim,
         output_size=1,
         num_layers=1,
         history_size=history_size,
@@ -61,10 +63,13 @@ def test_spring_force_training_model_forward():
         hidden_dim=16,
         device=device,
     )
+    spring_coeff_head = SpringCoefficientHead(latent_dim=latent_dim, device=device)
 
     model = SpringForceTrainingModel(
-        spring_transformer=spring_transformer,
+        model_transformer=model_transformer,
         force_transformer=force_transformer,
+        spring_coeff_head=spring_coeff_head,
+        latent_dim=latent_dim,
     )
 
     # Inputs are already normalized; zero mean / unit std dummy stats make the
@@ -82,10 +87,11 @@ def test_spring_transformer_force_estimator_stateful():
     history_size = 10
     spring_stride = 2
     force_stride = 2
+    latent_dim = 16
 
-    spring_transformer = TorchTransformerModel(
+    model_transformer = TorchTransformerModel(
         input_size=2,
-        output_size=1,
+        output_size=latent_dim,
         num_layers=1,
         history_size=spring_history_size,
         num_heads=2,
@@ -93,7 +99,7 @@ def test_spring_transformer_force_estimator_stateful():
         device=device,
     )
     force_transformer = TorchTransformerModel(
-        input_size=3,
+        input_size=2 + latent_dim,
         output_size=1,
         num_layers=1,
         history_size=history_size,
@@ -101,13 +107,16 @@ def test_spring_transformer_force_estimator_stateful():
         hidden_dim=16,
         device=device,
     )
+    spring_coeff_head = SpringCoefficientHead(latent_dim=latent_dim, device=device)
 
     in_mean, in_std = _make_dummy_stats(device, 2)
     spring_in_mean, spring_in_std = _make_dummy_stats(device, 2)
 
     model = SpringTransformerForceEstimator(
-        spring_transformer=spring_transformer,
+        model_transformer=model_transformer,
         force_transformer=force_transformer,
+        spring_coeff_head=spring_coeff_head,
+        latent_dim=latent_dim,
         input_mean=in_mean,
         input_std=in_std,
         spring_input_mean=spring_in_mean,
@@ -137,10 +146,11 @@ def test_spring_transformer_force_estimator_scriptable():
     history_size = 10
     spring_stride = 2
     force_stride = 2
+    latent_dim = 16
 
-    spring_transformer = TorchTransformerModel(
+    model_transformer = TorchTransformerModel(
         input_size=2,
-        output_size=1,
+        output_size=latent_dim,
         num_layers=1,
         history_size=spring_history_size,
         num_heads=2,
@@ -148,7 +158,7 @@ def test_spring_transformer_force_estimator_scriptable():
         device=device,
     )
     force_transformer = TorchTransformerModel(
-        input_size=3,
+        input_size=2 + latent_dim,
         output_size=1,
         num_layers=1,
         history_size=history_size,
@@ -156,13 +166,16 @@ def test_spring_transformer_force_estimator_scriptable():
         hidden_dim=16,
         device=device,
     )
+    spring_coeff_head = SpringCoefficientHead(latent_dim=latent_dim, device=device)
 
     in_mean, in_std = _make_dummy_stats(device, 2)
     spring_in_mean, spring_in_std = _make_dummy_stats(device, 2)
 
     model = SpringTransformerForceEstimator(
-        spring_transformer=spring_transformer,
+        model_transformer=model_transformer,
         force_transformer=force_transformer,
+        spring_coeff_head=spring_coeff_head,
+        latent_dim=latent_dim,
         input_mean=in_mean,
         input_std=in_std,
         spring_input_mean=spring_in_mean,
@@ -184,10 +197,11 @@ def test_wrapped_spring_transformer_force_estimator_scriptable():
     history_size = 10
     spring_stride = 2
     force_stride = 2
+    latent_dim = 16
 
-    spring_transformer = TorchTransformerModel(
+    model_transformer = TorchTransformerModel(
         input_size=2,
-        output_size=1,
+        output_size=latent_dim,
         num_layers=1,
         history_size=spring_history_size,
         num_heads=2,
@@ -195,7 +209,7 @@ def test_wrapped_spring_transformer_force_estimator_scriptable():
         device=device,
     )
     force_transformer = TorchTransformerModel(
-        input_size=3,
+        input_size=2 + latent_dim,
         output_size=1,
         num_layers=1,
         history_size=history_size,
@@ -203,6 +217,7 @@ def test_wrapped_spring_transformer_force_estimator_scriptable():
         hidden_dim=16,
         device=device,
     )
+    spring_coeff_head = SpringCoefficientHead(latent_dim=latent_dim, device=device)
 
     in_mean, in_std = _make_dummy_stats(device, 2)
     spring_in_mean, spring_in_std = _make_dummy_stats(device, 2)
@@ -210,8 +225,10 @@ def test_wrapped_spring_transformer_force_estimator_scriptable():
     force_out_mean, force_out_std = _make_dummy_stats(device, 1)
 
     deployable = SpringTransformerForceEstimator(
-        spring_transformer=spring_transformer,
+        model_transformer=model_transformer,
         force_transformer=force_transformer,
+        spring_coeff_head=spring_coeff_head,
+        latent_dim=latent_dim,
         input_mean=in_mean,
         input_std=in_std,
         spring_input_mean=spring_in_mean,
@@ -260,10 +277,11 @@ def test_spring_transformer_force_estimator_smoothing():
     history_size = 10
     spring_stride = 2
     force_stride = 2
+    latent_dim = 16
 
-    spring_transformer = TorchTransformerModel(
+    model_transformer = TorchTransformerModel(
         input_size=2,
-        output_size=1,
+        output_size=latent_dim,
         num_layers=1,
         history_size=spring_history_size,
         num_heads=2,
@@ -271,7 +289,7 @@ def test_spring_transformer_force_estimator_smoothing():
         device=device,
     )
     force_transformer = TorchTransformerModel(
-        input_size=3,
+        input_size=2 + latent_dim,
         output_size=1,
         num_layers=1,
         history_size=history_size,
@@ -279,14 +297,18 @@ def test_spring_transformer_force_estimator_smoothing():
         hidden_dim=16,
         device=device,
     )
+    spring_coeff_head = SpringCoefficientHead(latent_dim=latent_dim, device=device)
 
     in_mean, in_std = _make_dummy_stats(device, 2)
     spring_in_mean, spring_in_std = _make_dummy_stats(device, 2)
 
-    # With alpha=0.0 the spring estimate should stay pinned to the initial zero.
+    # With alpha=0.0 the latent estimate should stay pinned to the initial zero,
+    # which makes the spring-coefficient head output constant as well.
     model = SpringTransformerForceEstimator(
-        spring_transformer=spring_transformer,
+        model_transformer=model_transformer,
         force_transformer=force_transformer,
+        spring_coeff_head=spring_coeff_head,
+        latent_dim=latent_dim,
         input_mean=in_mean,
         input_std=in_std,
         spring_input_mean=spring_in_mean,
@@ -299,8 +321,10 @@ def test_spring_transformer_force_estimator_smoothing():
     model.eval()
 
     static_input = torch.zeros(1, history_size, 2)
-    out = model(static_input)
-    assert torch.allclose(out[0, 0, 1], torch.tensor(0.0), atol=1e-6)
+    out1 = model(static_input)
+    out2 = model(static_input)
+    assert torch.allclose(model.last_latent, torch.zeros_like(model.last_latent), atol=1e-6)
+    assert torch.allclose(out1[0, 0, 1], out2[0, 0, 1], atol=1e-6)
 
 
 def test_spring_transformer_force_estimator_stride_rate():
@@ -309,10 +333,11 @@ def test_spring_transformer_force_estimator_stride_rate():
     history_size = 5
     spring_stride = 4
     force_stride = 2
+    latent_dim = 16
 
-    spring_transformer = TorchTransformerModel(
+    model_transformer = TorchTransformerModel(
         input_size=2,
-        output_size=1,
+        output_size=latent_dim,
         num_layers=1,
         history_size=spring_history_size,
         num_heads=2,
@@ -320,7 +345,7 @@ def test_spring_transformer_force_estimator_stride_rate():
         device=device,
     )
     force_transformer = TorchTransformerModel(
-        input_size=3,
+        input_size=2 + latent_dim,
         output_size=1,
         num_layers=1,
         history_size=history_size,
@@ -328,13 +353,16 @@ def test_spring_transformer_force_estimator_stride_rate():
         hidden_dim=16,
         device=device,
     )
+    spring_coeff_head = SpringCoefficientHead(latent_dim=latent_dim, device=device)
 
     in_mean, in_std = _make_dummy_stats(device, 2)
     spring_in_mean, spring_in_std = _make_dummy_stats(device, 2)
 
     model = SpringTransformerForceEstimator(
-        spring_transformer=spring_transformer,
+        model_transformer=model_transformer,
         force_transformer=force_transformer,
+        spring_coeff_head=spring_coeff_head,
+        latent_dim=latent_dim,
         input_mean=in_mean,
         input_std=in_std,
         spring_input_mean=spring_in_mean,

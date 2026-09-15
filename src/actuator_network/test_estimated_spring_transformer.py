@@ -7,7 +7,9 @@ from actuator_network.helpers.pandas_processing import extrapolate_dataframe, pr
 from actuator_network.helpers.pandas_to_mcap import data_df_to_mcap
 from actuator_network.helpers.pandas_to_torch import pandas_to_torch
 
+# DEFAULT_MODEL_PATH = "/workspace/data/output_data/best_estimated_spring_transformer_from_sweep.pt"
 DEFAULT_MODEL_PATH = "/workspace/data/output_data/best_estimated_spring_transformer_latest.pt"
+# DEFAULT_MODEL_PATH = "/workspace/data/output_data/best_estimated_spring_transformer_sweep_mtyeemuo_latest.pt"
 
 
 def run_estimated_spring_transformer_inference(

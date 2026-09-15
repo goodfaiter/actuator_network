@@ -1,12 +1,14 @@
-"""Train a spring-class estimator + force estimator transformer pair jointly.
+"""Train a model transformer + force estimator transformer pair jointly.
 
-The spring transformer is trained to estimate a continuous spring coefficient
-(0.0 = weak, 0.5 = finger, 1.0 = strong) from a frozen input buffer of
-[delta_position, velocity]. The buffer is updated only when |velocity| > 0.1;
-otherwise the previous buffer is reused. The force transformer receives
-[delta_position, velocity, estimated_spring] and estimates
-``tendon_bota_force_newton_data``. Both transformers are trained end-to-end
-with a combined loss: force MSE + auxiliary spring MSE.
+The model transformer is trained to map a frozen input buffer of
+[delta_position, velocity] to a latent representation. This latent vector is fed
+to the force transformer, which receives [delta_position, velocity, latent] and
+estimates ``tendon_bota_force_newton_data``. A small ``SpringCoefficientHead``
+MLP reconstructs the continuous spring coefficient (0.0 = weak, 0.5 = finger,
+1.0 = strong) from the latent vector for the auxiliary loss. The spring buffer
+is updated only when |velocity| > 0.1; otherwise the previous buffer is reused.
+Both transformers and the coefficient head are trained end-to-end with a
+combined loss: force MSE + auxiliary spring MSE.
 
 Hyperparameters are read from ``wandb.config`` so this script can be used as the
 program for a W&B sweep agent. When run manually, it falls back to the defaults.
@@ -26,6 +28,7 @@ from actuator_network.helpers.pandas_to_torch import (
     pandas_to_torch,
 )
 from actuator_network.helpers.torch_model import (
+    SpringCoefficientHead,
     SpringForceTrainingModel,
     SpringTransformerForceEstimator,
     TorchTransformerModel,
@@ -61,7 +64,7 @@ def _build_frozen_spring_windows(
     last_moving_window = torch.zeros_like(normal_windows[0])
 
     for i in range(num_samples):
-        if torch.abs(normal_windows[i, -1, velocity_idx]) > velocity_threshold:
+        if normal_windows[i, -1, velocity_idx] > velocity_threshold:
             last_moving_window = normal_windows[i].clone()
         spring_windows[i] = last_moving_window
 
@@ -317,9 +320,9 @@ def train_estimated_spring_transformer(
     val_combined_targets = torch.cat([val_force_targets_norm, val_spring_targets_norm], dim=-1)
 
     # Create transformers with sizes derived from the data.
-    spring_transformer = TorchTransformerModel(
+    model_transformer = TorchTransformerModel(
         input_size=train_spring_windows.shape[-1],
-        output_size=train_spring_targets.shape[-1],
+        output_size=config.spring_latent_dim,
         num_layers=config.spring_num_layers,
         history_size=config.spring_history_size,
         num_heads=config.spring_num_heads,
@@ -329,7 +332,7 @@ def train_estimated_spring_transformer(
         activation=config.spring_activation,
     )
     force_transformer = TorchTransformerModel(
-        input_size=train_force_windows.shape[-1] + train_spring_targets.shape[-1],
+        input_size=train_force_windows.shape[-1] + config.spring_latent_dim,
         output_size=train_force_targets.shape[-1],
         num_layers=config.force_num_layers,
         history_size=config.force_history_size,
@@ -339,16 +342,24 @@ def train_estimated_spring_transformer(
         dropout=config.force_dropout,
         activation=config.force_activation,
     )
+    spring_coeff_head = SpringCoefficientHead(
+        latent_dim=config.spring_latent_dim,
+        device=device,
+    )
 
     training_model = SpringForceTrainingModel(
-        spring_transformer=spring_transformer,
+        model_transformer=model_transformer,
         force_transformer=force_transformer,
+        spring_coeff_head=spring_coeff_head,
+        latent_dim=config.spring_latent_dim,
     ).to(device)
 
     # Assemble deployable model.
     deployable_model = SpringTransformerForceEstimator(
-        spring_transformer=spring_transformer,
+        model_transformer=model_transformer,
         force_transformer=force_transformer,
+        spring_coeff_head=spring_coeff_head,
+        latent_dim=config.spring_latent_dim,
         input_mean=force_input_base_mean,
         input_std=force_input_base_std,
         spring_input_mean=spring_input_mean,
@@ -422,22 +433,22 @@ def main():
 
     mcap_files: list[tuple[str, float]] = [
         # finger, mixed 200Hz
-        ("/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_03_30_0.mcap", 0.5),
-        ("/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_52_16_0.mcap", 0.5),
+        ("/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_03_30_0.mcap", 10.770059235),
+        ("/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_52_16_0.mcap", 10.770059235),
         # weak spring, mixed 200Hz
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_11_49_0.mcap", 0.0),
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_15_46_0.mcap", 0.0),
+        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_11_49_0.mcap", 1.326609775),
+        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_15_46_0.mcap", 1.326609775),
         # strong spring, mixed 200Hz
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_27_46_0.mcap", 1.0),
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_31_31_0.mcap", 1.0),
+        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_27_46_0.mcap", 3.916449086),
+        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_31_31_0.mcap", 3.916449086),
     ]
     val_mcap_files: list[tuple[str, float]] = [
         # finger, mixed 200Hz
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-11_58_32_0.mcap", 0.5),
+        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-11_58_32_0.mcap", 10.770059235),
         # weak spring, mixed 200Hz
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_18_38_0.mcap", 0.0),
+        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_18_38_0.mcap", 1.326609775),
         # strong spring, mixed 200Hz
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_34_43_0.mcap", 1.0),
+        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_34_43_0.mcap", 3.916449086),
     ]
 
     print("Loading and processing training MCAP files...")

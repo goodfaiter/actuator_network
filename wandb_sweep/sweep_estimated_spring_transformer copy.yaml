@@ -5,22 +5,12 @@ metric:
   goal: minimize
 parameters:
   # ------------------------------- Fixed parameters -------------------------------
-  aux_weight:
-    value: 1.0
   accumulation_steps:
-    value: 4
+    value: 1
   batch_size:
-    value: 256
+    value: 1024
   data_freq:
     value: 200
-  force_activation:
-    value: relu
-  force_dropout:
-    value: 0.3
-  input_noise_std:
-    value: 0.05
-  learning_rate:
-    value: 0.001
   max_grad_norm:
     value: 1
   num_epochs:
@@ -29,28 +19,32 @@ parameters:
     value: false
   spring_alpha:
     value: 0.1
-  scheduler_type:
-    value: none
-  spring_activation:
-    value: relu
-  spring_dropout:
-    value: 0.3
-  spring_latent_dim:
-    value: 8
   val_fraction:
-    value: 1.0
+    value: 0.2
   velocity_threshold:
     value: 0.5
   weight_decay:
     value: 1.0e-5
 
   # ---------------------------- Searched parameters -----------------------------
+  aux_weight:
+    distribution: uniform
+    min: 0.1
+    max: 1.0
+  force_activation:
+    values: [relu, tanh, gelu, leaky_relu, elu, silu]
+  force_dropout:
+    distribution: uniform
+    min: 0.0
+    max: 0.3
   force_hidden_dim_per_head:
-    values: [8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32]
+    values: [8, 10, 12, 14, 16]
   force_history_size:
-    values: [25, 50, 75, 100, 125, 150, 175, 200, 225, 250, 275, 300, 325, 350, 375, 400, 425, 450, 475, 500]
+    distribution: int_uniform
+    min: 50
+    max: 200
   force_num_heads:
-    values: [1, 2, 4]
+    values: [2, 4, 8]
   force_num_layers:
     distribution: int_uniform
     min: 1
@@ -59,14 +53,30 @@ parameters:
     distribution: int_uniform
     min: 1
     max: 4
+  input_noise_std:
+    distribution: uniform
+    min: 0.0
+    max: 0.05
+  learning_rate:
+    distribution: log_uniform_values
+    min: 0.0001
+    max: 0.01
+  scheduler_type:
+    values: [none, cosine, step]
+  spring_activation:
+    values: [relu, tanh, gelu, leaky_relu, elu, silu]
+  spring_dropout:
+    distribution: uniform
+    min: 0.0
+    max: 0.3
   spring_hidden_dim_per_head:
-    values: [8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32]
+    values: [8, 10, 12, 14, 16]
   spring_history_size:
-    values: [25, 50, 75, 100, 125, 150, 175, 200, 225, 250, 275, 300, 325, 350, 375, 400, 425, 450, 475, 500]
+    distribution: int_uniform
+    min: 50
+    max: 600
   spring_num_heads:
-    values: [1, 2, 4]
-  spring_latent_dim:
-    values: [2, 4, 8, 16]
+    values: [2, 4, 8]
   spring_num_layers:
     distribution: int_uniform
     min: 1

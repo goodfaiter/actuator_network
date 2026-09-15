@@ -22,35 +22,36 @@ class EstimatedSpringTransformerConfig:
     velocity_threshold: float = 0.5
 
     # Spring transformer parameters
-    spring_history_size: int = 600
-    spring_stride: int = 4
-    spring_num_layers: int = 2
-    spring_num_heads: int = 2
-    spring_hidden_dim: int = 32
-    spring_dropout: float = 0.2
+    spring_history_size: int = 500
+    spring_stride: int = 4  # force_stride (4) * spring_stride_multiplier (4)
+    spring_num_layers: int = 1
+    spring_num_heads: int = 4
+    spring_hidden_dim: int = 112  # spring_num_heads (4) * spring_hidden_dim_per_head (28)
+    spring_latent_dim: int = 1
+    spring_dropout: float = 0.3
     spring_activation: str = "relu"
 
     # Force transformer parameters
-    force_history_size: int = 150
+    force_history_size: int = 50
     force_stride: int = 2
     force_num_layers: int = 2
-    force_num_heads: int = 2
-    force_hidden_dim: int = 32
-    force_dropout: float = 0.1
+    force_num_heads: int = 4
+    force_hidden_dim: int = 72  # force_num_heads (4) * force_hidden_dim_per_head (18)
+    force_dropout: float = 0.3
     force_activation: str = "relu"
 
     # Training parameters
-    num_epochs: int = 50
+    num_epochs: int = 20
     learning_rate: float = 0.001
-    batch_size: int = 512
-    accumulation_steps: int = 2
+    batch_size: int = 1024
+    accumulation_steps: int = 1
     aux_weight: float = 1.0
     weight_decay: float = 1e-5
-    scheduler_type: str = "cosine"
+    scheduler_type: str = "none"
     max_grad_norm: float = 1.0
-    input_noise_std: float = 0.01
-    spring_alpha: float = 0.05
-    val_fraction: float = 0.2
+    input_noise_std: float = 0.05
+    spring_alpha: float = 0.1
+    val_fraction: float = 1.0
 
     @classmethod
     def defaults(cls) -> "EstimatedSpringTransformerConfig":
@@ -61,10 +62,11 @@ class EstimatedSpringTransformerConfig:
         """Return True if the configuration is valid for the Transformers.
 
         Both spring and force transformers require ``hidden_dim`` to be
-        divisible by ``num_heads``.
+        divisible by ``num_heads`` and even (the positional encoding assumes
+        an even number of dimensions).
         """
-        spring_valid = self.spring_hidden_dim % self.spring_num_heads == 0
-        force_valid = self.force_hidden_dim % self.force_num_heads == 0
+        spring_valid = self.spring_hidden_dim % self.spring_num_heads == 0 and self.spring_hidden_dim % 2 == 0
+        force_valid = self.force_hidden_dim % self.force_num_heads == 0 and self.force_hidden_dim % 2 == 0
         return spring_valid and force_valid
 
     @classmethod
