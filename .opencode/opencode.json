@@ -12,6 +12,9 @@
       "models": {
         "moonshotai/Kimi-K2.7-Code": {
           "name": "Kimi K2.7 Code"
+        }, 
+        "zai-org/GLM-5.3-Flash": {
+          "name": "GLM-5.3-Flash"
         }
       }
     }

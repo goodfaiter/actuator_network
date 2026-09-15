@@ -12,6 +12,37 @@ DEFAULT_MODEL_PATH = "/workspace/data/output_data/best_estimated_spring_transfor
 # DEFAULT_MODEL_PATH = "/workspace/data/output_data/best_estimated_spring_transformer_sweep_mtyeemuo_latest.pt"
 
 
+def _build_inference_window(
+    features: torch.Tensor,
+    t: int,
+    num_hist: int,
+    stride: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Build a zero-padded history window for timestep ``t``.
+
+    Early timesteps for which the history would extend before the start of the
+    data are included and padded with zeros at the beginning of the window.
+
+    Args:
+        features: Input tensor of shape ``(num_samples, feature_dim)``.
+        t: Current timestep.
+        num_hist: Number of history steps in the window.
+        stride: Stride between history samples.
+        device: Torch device.
+
+    Returns:
+        Window tensor of shape ``(1, num_hist, feature_dim)``.
+    """
+    window_span = (num_hist - 1) * stride + 1
+    window_offsets = torch.arange(num_hist, device=device) * stride
+    indices = t - (window_span - 1) + window_offsets
+    indices_clamped = indices.clamp_min(0)
+    window = features[indices_clamped].clone()
+    window[indices < 0] = 0.0
+    return window.unsqueeze(0)  # [1, History, Feature]
+
+
 def run_estimated_spring_transformer_inference(
     model_path: str,
     mcap_file_paths: list[str],
@@ -53,13 +84,10 @@ def run_estimated_spring_transformer_inference(
             data_df_extrapolated[col + "_predicted"] = 0.0
 
         num_samples = features.shape[0]
-        window_span = (num_hist - 1) * stride + 1
         predictions = torch.zeros((num_samples, len(output_cols)))
-        window_offsets = torch.arange(num_hist, device=device) * stride
 
-        for t in range(window_span - 1, num_samples):
-            indices = t - (window_span - 1) + window_offsets
-            window = features[indices].unsqueeze(0)  # [1, History, Feature]
+        for t in range(num_samples):
+            window = _build_inference_window(features, t, num_hist, stride, device=device)
             with torch.no_grad():
                 pred = model(window)
             predictions[t, :] = pred[0, 0, :]
