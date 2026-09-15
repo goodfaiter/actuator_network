@@ -253,7 +253,7 @@ class EstimatedSpringTransformerConfig(BaseTrainingConfig):
     spring_num_layers: int = 1
     spring_num_heads: int = 4
     spring_hidden_dim: int = 112  # spring_num_heads (4) * spring_hidden_dim_per_head (28)
-    spring_latent_dim: int = 1
+    spring_latent_dim: int = 16
     spring_dropout: float = 0.3
     spring_activation: str = "relu"
 

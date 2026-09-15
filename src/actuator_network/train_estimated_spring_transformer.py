@@ -78,11 +78,14 @@ def _build_aligned_windows(
     spring_stride: int,
     force_stride: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Build spring and force windows aligned to the same end timestep.
+    """Build zero-padded spring and force windows aligned to the same end timestep.
 
     Both windows end at the same raw index, but each window samples backward at
     its own stride. This is necessary because the two transformers may use
     different history lengths and different strides.
+
+    Early timesteps for which the history would extend before the start of the
+    data are included and padded with zeros at the beginning of the window.
 
     Args:
         data: Input tensor of shape ``(batch_size, feature_dim)``.
@@ -93,31 +96,35 @@ def _build_aligned_windows(
 
     Returns:
         Tuple of ``(spring_windows, force_windows)`` with shapes
-        ``(num_sequences, spring_history_size, feature_dim)`` and
-        ``(num_sequences, force_history_size, feature_dim)``.
+        ``(batch_size, spring_history_size, feature_dim)`` and
+        ``(batch_size, force_history_size, feature_dim)``.
     """
     batch_size, feature_dim = data.shape
-    max_start = max((spring_history_size - 1) * spring_stride, (force_history_size - 1) * force_stride)
-    num_sequences = batch_size - max_start
-    if num_sequences <= 0:
+    if batch_size == 0:
         empty_shape_spring = (0, spring_history_size, feature_dim)
         empty_shape_force = (0, force_history_size, feature_dim)
         return torch.empty(empty_shape_spring, device=data.device), torch.empty(empty_shape_force, device=data.device)
 
-    end_indices = torch.arange(num_sequences, device=data.device) + max_start
+    end_indices = torch.arange(batch_size, device=data.device)
 
     spring_offsets = (
         torch.arange(spring_history_size, device=data.device) * spring_stride
         - (spring_history_size - 1) * spring_stride
     )
     spring_indices = end_indices.unsqueeze(1) + spring_offsets.unsqueeze(0)
+    spring_indices_clamped = spring_indices.clamp_min(0)
+    spring_windows = data[spring_indices_clamped].clone()
+    spring_windows[spring_indices < 0] = 0.0
 
     force_offsets = (
         torch.arange(force_history_size, device=data.device) * force_stride - (force_history_size - 1) * force_stride
     )
     force_indices = end_indices.unsqueeze(1) + force_offsets.unsqueeze(0)
+    force_indices_clamped = force_indices.clamp_min(0)
+    force_windows = data[force_indices_clamped].clone()
+    force_windows[force_indices < 0] = 0.0
 
-    return data[spring_indices], data[force_indices]
+    return spring_windows, force_windows
 
 
 def build_estimated_spring_dataset(
@@ -178,16 +185,12 @@ def build_estimated_spring_dataset(
             velocity_threshold=velocity_threshold,
         )
 
-        # Targets correspond to the shared end timestep of the aligned windows.
-        max_start = max((spring_history_size - 1) * spring_stride, (history_size - 1) * force_stride)
-        num_sequences = data_tensor.size(0) - max_start
-        if num_sequences > 0:
-            target_index = torch.arange(num_sequences, device=data_tensor.device) + max_start
-            spring_targets = data_tensor[target_index, spring_idx].unsqueeze(1).unsqueeze(1)
-            force_targets = data_tensor[target_index, output_idx].unsqueeze(1).unsqueeze(1)
-        else:
-            spring_targets = torch.empty((0, 1, 1), device=data_tensor.device)
-            force_targets = torch.empty((0, 1, 1), device=data_tensor.device)
+        # Targets correspond to the shared end timestep of each aligned window.
+        # With zero-padding we now have one window per sample.
+        num_sequences = data_tensor.size(0)
+        target_index = torch.arange(num_sequences, device=data_tensor.device)
+        spring_targets = data_tensor[target_index, spring_idx].unsqueeze(1).unsqueeze(1)
+        force_targets = data_tensor[target_index, output_idx].unsqueeze(1).unsqueeze(1)
 
         all_spring_windows.append(spring_windows)
         all_force_windows.append(force_windows)

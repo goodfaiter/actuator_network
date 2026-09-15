@@ -1,5 +1,6 @@
 """Tests for the estimated-spring transformer training pipeline."""
 
+import pandas as pd
 import torch
 
 from actuator_network.helpers.torch_model import (
@@ -9,7 +10,11 @@ from actuator_network.helpers.torch_model import (
     TorchTransformerModel,
 )
 from actuator_network.helpers.wrapper import ScaledModelWrapper
-from actuator_network.train_estimated_spring_transformer import _build_frozen_spring_windows
+from actuator_network.train_estimated_spring_transformer import (
+    _build_aligned_windows,
+    _build_frozen_spring_windows,
+    build_estimated_spring_dataset,
+)
 
 
 def test_build_frozen_spring_windows():
@@ -30,6 +35,90 @@ def test_build_frozen_spring_windows():
     # After the moving window, the buffer is frozen.
     assert torch.allclose(frozen[3], normal_windows[2])
     assert torch.allclose(frozen[4], normal_windows[2])
+
+
+def test_build_aligned_windows_zero_pads_early_samples():
+    """Early samples should be included with zero-padded history windows."""
+    data = torch.arange(20, dtype=torch.float32).view(10, 2)  # 10 samples, 2 features
+    spring_history_size = 3
+    force_history_size = 2
+    spring_stride = 2
+    force_stride = 1
+
+    spring_windows, force_windows = _build_aligned_windows(
+        data,
+        spring_history_size=spring_history_size,
+        force_history_size=force_history_size,
+        spring_stride=spring_stride,
+        force_stride=force_stride,
+    )
+
+    # We should get one window per sample.
+    assert spring_windows.shape == (10, spring_history_size, 2)
+    assert force_windows.shape == (10, force_history_size, 2)
+
+    # The first sample has no valid history before it, so only the last entry
+    # (the current timestep) is nonzero.
+    assert torch.allclose(spring_windows[0, -1], data[0])
+    assert torch.allclose(spring_windows[0, :-1], torch.zeros_like(spring_windows[0, :-1]))
+    assert torch.allclose(force_windows[0, -1], data[0])
+    assert torch.allclose(force_windows[0, :-1], torch.zeros_like(force_windows[0, :-1]))
+
+    # Later samples should contain actual data at the end and zeros at the start.
+    # Spring window end timestep for sample i uses data[i] (stride 2, history 3).
+    assert torch.allclose(spring_windows[-1, -1], data[-1])
+    assert torch.allclose(force_windows[-1, -1], data[-1])
+
+
+def test_build_estimated_spring_dataset_includes_all_samples():
+    """The dataset should include every sample with zero-padded early windows."""
+    num_samples = 12
+    df = pd.DataFrame(
+        {
+            "measured_position_rad_data": torch.linspace(0, 1, num_samples).tolist(),
+            "desired_position_rad_data": torch.linspace(1, 2, num_samples).tolist(),
+            "measured_velocity_rad_per_sec_data": torch.linspace(-1, 1, num_samples).tolist(),
+            "tendon_bota_force_newton_data": torch.sin(torch.linspace(0, 4 * 3.14159, num_samples)).tolist(),
+        }
+    )
+
+    spring_windows, force_windows, spring_targets, force_targets = build_estimated_spring_dataset(
+        dataframes=[df],
+        file_labels=[("dummy.mcap", 0.5)],
+        spring_history_size=4,
+        history_size=2,
+        spring_stride=2,
+        force_stride=1,
+        prediction=False,
+        velocity_threshold=0.0,  # every non-zero velocity triggers a spring-buffer update.
+        device=torch.device("cpu"),
+    )
+
+    assert spring_windows.shape[0] == num_samples
+    assert force_windows.shape[0] == num_samples
+    assert spring_targets.shape[0] == num_samples
+    assert force_targets.shape[0] == num_samples
+
+    # First windows are zero-padded before the current timestep.
+    first_features = torch.tensor(
+        df.iloc[0][[
+            "measured_position_rad_data",
+            "desired_position_rad_data",
+            "measured_velocity_rad_per_sec_data",
+        ]].to_numpy(),
+        dtype=torch.float32,
+    )
+    assert torch.allclose(spring_windows[0, -1], first_features)
+    assert torch.allclose(spring_windows[0, :-1], torch.zeros_like(spring_windows[0, :-1]))
+    assert torch.allclose(force_windows[0, -1], first_features)
+    assert torch.allclose(force_windows[0, :-1], torch.zeros_like(force_windows[0, :-1]))
+
+    # Targets line up with the last (current) timestep of each window.
+    assert torch.allclose(
+        force_targets[-1, 0, 0],
+        torch.tensor(df["tendon_bota_force_newton_data"].iloc[-1], dtype=torch.float32),
+    )
+    assert torch.allclose(spring_targets[:, 0, 0], torch.full((num_samples,), 0.5))
 
 
 def _make_dummy_stats(device: torch.device, dims: int):
