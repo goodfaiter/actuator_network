@@ -1,4 +1,4 @@
-"""Tests for the estimated-spring transformer training pipeline."""
+"""Tests for the spring transformer training pipeline."""
 
 import pandas as pd
 import torch
@@ -9,11 +9,11 @@ from actuator_network.helpers.torch_model import (
     TorchTransformerModel,
 )
 from actuator_network.helpers.wrapper import ScaledModelWrapper
-from actuator_network.train_estimated_spring_transformer import (
+from actuator_network.train_spring_transformer import (
     _build_aligned_windows,
     _build_frozen_spring_windows,
-    build_estimated_spring_dataset,
-    compute_estimated_spring_dataset_stats,
+    build_spring_dataset,
+    compute_spring_dataset_stats,
 )
 
 
@@ -70,7 +70,7 @@ def test_build_aligned_windows_zero_pads_early_samples():
     assert torch.allclose(force_windows[-1, -1], data[-1])
 
 
-def test_build_estimated_spring_dataset_includes_all_samples():
+def test_build_spring_dataset_includes_all_samples():
     """The dataset should include every sample with zero-padded early windows."""
     num_samples = 12
     df = pd.DataFrame(
@@ -82,9 +82,9 @@ def test_build_estimated_spring_dataset_includes_all_samples():
         }
     )
 
-    stats = compute_estimated_spring_dataset_stats(dataframes=[df], file_labels=[("dummy.mcap", 0.5)])
+    stats = compute_spring_dataset_stats(dataframes=[df], file_labels=[("dummy.mcap", 0.5)])
 
-    spring_windows, force_windows, spring_targets, force_targets = build_estimated_spring_dataset(
+    spring_windows, force_windows, spring_targets, force_targets = build_spring_dataset(
         dataframes=[df],
         file_labels=[("dummy.mcap", 0.5)],
         spring_history_size=4,

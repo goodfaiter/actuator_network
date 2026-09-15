@@ -7,9 +7,9 @@ from actuator_network.helpers.pandas_processing import extrapolate_dataframe, pr
 from actuator_network.helpers.pandas_to_mcap import data_df_to_mcap
 from actuator_network.helpers.pandas_to_torch import pandas_to_torch
 
-# DEFAULT_MODEL_PATH = "/workspace/data/output_data/best_estimated_spring_transformer_from_sweep.pt"
-DEFAULT_MODEL_PATH = "/workspace/data/output_data/best_estimated_spring_transformer_latest.pt"
-# DEFAULT_MODEL_PATH = "/workspace/data/output_data/best_estimated_spring_transformer_sweep_mtyeemuo_latest.pt"
+# DEFAULT_MODEL_PATH = "/workspace/data/output_data/best_spring_transformer_from_sweep.pt"
+DEFAULT_MODEL_PATH = "/workspace/data/output_data/best_spring_transformer_latest.pt"
+# DEFAULT_MODEL_PATH = "/workspace/data/output_data/best_spring_transformer_sweep_mtyeemuo_latest.pt"
 
 
 def _build_inference_window(
@@ -43,7 +43,7 @@ def _build_inference_window(
     return window.unsqueeze(0)  # [1, History, Feature]
 
 
-def run_estimated_spring_transformer_inference(
+def run_spring_transformer_inference(
     model_path: str,
     mcap_file_paths: list[str],
 ) -> list[str]:
@@ -65,7 +65,7 @@ def run_estimated_spring_transformer_inference(
 
     output_paths = []
     for mcap_file_path in mcap_file_paths:
-        print("Loading estimated-spring transformer model...")
+        print("Loading spring transformer model...")
         # Reload per file: the model is stateful (spring buffer) and reset() does
         # not survive torch.jit.script, so a fresh instance is used per recording.
         model = torch.jit.load(model_path, map_location=device)
@@ -101,7 +101,7 @@ def run_estimated_spring_transformer_inference(
         for i, col in enumerate(output_cols):
             data_df_extrapolated[col + "_predicted"] = predictions[:, i].numpy()
 
-        output_path = mcap_file_path.replace(".mcap", "_estimated_spring_transformer_predicted.mcap")
+        output_path = mcap_file_path.replace(".mcap", "_spring_transformer_predicted.mcap")
         data_df_to_mcap(data_df_extrapolated, output_path)
         print(f"  wrote {output_path}")
         output_paths.append(output_path)
@@ -116,7 +116,7 @@ def main():
         "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_34_43_0.mcap",  # strong spring, mixed 200Hz
     ]
 
-    run_estimated_spring_transformer_inference(DEFAULT_MODEL_PATH, mcap_file_paths)
+    run_spring_transformer_inference(DEFAULT_MODEL_PATH, mcap_file_paths)
 
 
 if __name__ == "__main__":

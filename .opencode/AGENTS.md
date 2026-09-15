@@ -36,13 +36,13 @@ The trained model is wrapped in `ScaledModelWrapper`, which includes input/outpu
 │   ├── train_m5.py                     # Entry point: fit M5 friction model
 │   ├── train_m5_transformer.py         # Entry point: train M5 + Transformer jointly (JSON-only output, no TorchScript export)
 │   ├── train_transformer_autoregressive.py  # Entry point: train autoregressive Transformer
-│   ├── train_estimated_spring_transformer.py  # Entry point: train spring + force transformer pair (W&B sweep target)
+│   ├── train_spring_transformer.py  # Entry point: train spring + force transformer pair (W&B sweep target)
 │   ├── test_mlp.py                     # Entry point: run MLP inference on test MCAPs
 │   ├── test_rnn.py                     # Entry point: run RNN inference on test MCAPs
 │   ├── test_transformer.py             # Entry point: run Transformer inference on test MCAPs
 │   ├── test_m5.py                      # Entry point: run M5 inference on test MCAPs
 │   ├── test_transformer_autoregressive.py   # Entry point: run autoregressive Transformer inference
-│   ├── test_estimated_spring_transformer.py # Entry point: run spring + force transformer inference
+│   ├── test_spring_transformer.py # Entry point: run spring + force transformer inference
 │   ├── helpers/
 │   │   ├── mcap_to_pandas.py           # Read ROS2 MCAP → pandas DataFrame
 │   │   ├── pandas_processing.py        # Resample (extrapolate_dataframe), derive load/force; dt derived from index
@@ -97,13 +97,13 @@ uv run test-transformer
 - `train-m5`
 - `train-m5-transformer`
 - `train-transformer-autoregressive`
-- `train-estimated-spring-transformer`
+- `train-spring-transformer`
 - `test-mlp`
 - `test-rnn`
 - `test-transformer`
 - `test-m5`
 - `test-transformer-autoregressive`
-- `test-estimated-spring-transformer`
+- `test-spring-transformer`
 
 Run them with `uv run <script>`.
 
@@ -182,10 +182,10 @@ Key configuration knobs in the training scripts:
 
 ### Hyperparameter sweep with W&B
 
-`train_estimated_spring_transformer.py` is configured to run as the target program for a W&B sweep agent. Hyperparameters are read from `wandb.config` and fall back to the defaults in `EstimatedSpringTransformerConfig` for a manual run.
+`train_spring_transformer.py` is configured to run as the target program for a W&B sweep agent. Hyperparameters are read from `wandb.config` and fall back to the defaults in `SpringTransformerConfig` for a manual run.
 
-- The sweep configuration lives in `wandb_sweep/sweep_estimated_spring_transformer.yaml`. Paste it into the W&B web UI when creating a new sweep.
-- Transformer hidden dimensions are reparameterized via `*_num_heads` and `*_hidden_dim_per_head`; `EstimatedSpringTransformerConfig.from_wandb_config()` computes `hidden_dim = num_heads * per_head` so the divisibility constraint is always satisfied.
+- The sweep configuration lives in `wandb_sweep/sweep_spring_transformer.yaml`. Paste it into the W&B web UI when creating a new sweep.
+- Transformer hidden dimensions are reparameterized via `*_num_heads` and `*_hidden_dim_per_head`; `SpringTransformerConfig.from_wandb_config()` computes `hidden_dim = num_heads * per_head` so the divisibility constraint is always satisfied.
 - Training uses a combined loss (`force MSE + aux_weight * spring MSE`), but validation (`val_loss`) uses only the force MSE (auxiliary spring loss disabled) for consistent comparison across runs.
 - Processed MCAP DataFrames are cached under `data/cache/processed_dataframes/` so sweep agents do not re-parse raw MCAPs on every run.
 - To launch agents after creating the sweep in W&B:
@@ -193,7 +193,7 @@ Key configuration knobs in the training scripts:
   cd /workspace
   uv run wandb agent goodfaiter-epfl/actuator_network/<sweep-id>
   ```
-- For a single manual run, use `uv run train-estimated-spring-transformer`.
+- For a single manual run, use `uv run train-spring-transformer`.
 
 ### 3. Run inference
 
@@ -203,7 +203,7 @@ uv run test-rnn
 uv run test-transformer
 uv run test-m5
 uv run test-transformer-autoregressive
-uv run test-estimated-spring-transformer
+uv run test-spring-transformer
 ```
 
 Each `test-*.py` script loads the matching `best_<model>_latest.pt` TorchScript model (e.g., `best_transformer_latest.pt`), reads its stored metadata — `input_columns`/`output_columns` and the `metadata` dict (`frequency`, `history_size`, `stride`) so preprocessing always matches training —, builds the matching input tensor, runs the model, and writes a `<input>_<model>_predicted.mcap` with the new `*_predicted` columns.
@@ -215,7 +215,7 @@ Each `test-*.py` script loads the matching `best_<model>_latest.pt` TorchScript 
 | Transformer | `best_transformer_latest.pt` | `_transformer_predicted.mcap` |
 | Transformer (autoregressive) | `best_transformer_autoregressive_latest.pt` | `_transformer_autoregressive_predicted.mcap` |
 | M5 | `m5_friction_params.json` | `_m5_predicted.mcap` |
-| Estimated-Spring Transformer | `best_estimated_spring_transformer_latest.pt` | `_estimated_spring_transformer_predicted.mcap` |
+| Spring Transformer | `best_spring_transformer_latest.pt` | `_spring_transformer_predicted.mcap` |
 
 ### 4. Generate plots
 
@@ -242,7 +242,7 @@ uv run python plot_rmse.py
 
 1. **Entry points are thin experiment wrappers.** Hyperparameters live in dataclasses in `helpers/hyperparameters.py`; each train/test script only hardcodes its MCAP path list. They work as `uv run <script>` entry points but are not a generic CLI yet.
 
-2. **`process_inputs_time_series` drops incomplete windows.** Sliding windows are built with fancy indexing; sequences that would extend past the end are dropped (no zero-padding). The estimated-spring pipeline instead builds explicitly zero-padded windows in the normalized domain (`_build_aligned_windows` / `_build_inference_window`, padding = exact zeros) — an intentional difference; the deployable `SpringTransformerModel` zero-initializes its spring buffer to match.
+2. **`process_inputs_time_series` drops incomplete windows.** Sliding windows are built with fancy indexing; sequences that would extend past the end are dropped (no zero-padding). The spring transformer pipeline instead builds explicitly zero-padded windows in the normalized domain (`_build_aligned_windows` / `_build_inference_window`, padding = exact zeros) — an intentional difference; the deployable `SpringTransformerModel` zero-initializes its spring buffer to match.
 
 3. **`process_dataframe` needs resampled data.** The derivative timestep `dt` is derived from the DataFrame index spacing, so always call `extrapolate_dataframe` before `process_dataframe`.
 
@@ -270,7 +270,7 @@ uv run train-transformer
 uv run train-m5
 uv run train-m5-transformer
 uv run train-transformer-autoregressive
-uv run train-estimated-spring-transformer
+uv run train-spring-transformer
 
 # Inference
 uv run test-mlp
@@ -278,7 +278,7 @@ uv run test-rnn
 uv run test-transformer
 uv run test-m5
 uv run test-transformer-autoregressive
-uv run test-estimated-spring-transformer
+uv run test-spring-transformer
 
 # Plots
 cd src/actuator_network/plots

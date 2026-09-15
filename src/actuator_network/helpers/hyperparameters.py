@@ -235,11 +235,11 @@ class M5TransformerConfig(TransformerConfig):
 
 
 @dataclass
-class EstimatedSpringTransformerConfig(BaseTrainingConfig):
-    """Hyperparameters for the estimated-spring transformer training pipeline.
+class SpringTransformerConfig(BaseTrainingConfig):
+    """Hyperparameters for the spring transformer training pipeline.
 
     The defaults match the current hardcoded values in
-    ``train_estimated_spring_transformer.py``.
+    ``train_spring_transformer.py``.
     """
 
     # Data/build parameters
@@ -291,7 +291,7 @@ class EstimatedSpringTransformerConfig(BaseTrainingConfig):
         return spring_valid and force_valid
 
     @classmethod
-    def from_wandb_config(cls, cfg: Any) -> "EstimatedSpringTransformerConfig":
+    def from_wandb_config(cls, cfg: Any) -> "SpringTransformerConfig":
         """Build a configuration from a W&B sweep config dict-like object.
 
         Values present in ``cfg`` override the defaults. The sweep may expose
@@ -309,7 +309,7 @@ class EstimatedSpringTransformerConfig(BaseTrainingConfig):
                 hyperparameters.
 
         Returns:
-            An ``EstimatedSpringTransformerConfig`` instance.
+            An ``SpringTransformerConfig`` instance.
         """
         config = super().from_wandb_config(cfg)
 

@@ -2,11 +2,11 @@
 
 from actuator_network.helpers.hyperparameters import (
     BaseTrainingConfig,
-    EstimatedSpringTransformerConfig,
     M5FrictionConfig,
     M5TransformerConfig,
     MlpConfig,
     RnnConfig,
+    SpringTransformerConfig,
     TransformerAutoregressiveConfig,
     TransformerConfig,
 )
@@ -131,9 +131,9 @@ def test_m5_transformer_config_defaults():
     ]
 
 
-def test_estimated_spring_transformer_config_defaults():
-    """The estimated-spring config defaults should match train_estimated_spring_transformer.py."""
-    config = EstimatedSpringTransformerConfig.defaults()
+def test_spring_transformer_config_defaults():
+    """The spring config defaults should match train_spring_transformer.py."""
+    config = SpringTransformerConfig.defaults()
     assert config.data_freq == 200
     assert config.num_epochs == 20
     assert config.learning_rate == 0.001
@@ -153,22 +153,22 @@ def test_estimated_spring_transformer_config_defaults():
     assert config.val_fraction == 1.0
 
 
-def test_estimated_spring_transformer_config_is_valid_requires_divisible_heads_and_even_dim():
+def test_spring_transformer_config_is_valid_requires_divisible_heads_and_even_dim():
     """Valid configs require hidden_dim to be divisible by num_heads and even."""
-    assert EstimatedSpringTransformerConfig(
+    assert SpringTransformerConfig(
         spring_hidden_dim=32, spring_num_heads=4, force_hidden_dim=64, force_num_heads=8
     ).is_valid()
-    assert not EstimatedSpringTransformerConfig(
+    assert not SpringTransformerConfig(
         spring_hidden_dim=32, spring_num_heads=6, force_hidden_dim=64, force_num_heads=8
     ).is_valid()
-    assert not EstimatedSpringTransformerConfig(
+    assert not SpringTransformerConfig(
         spring_hidden_dim=32, spring_num_heads=4, force_hidden_dim=64, force_num_heads=6
     ).is_valid()
     # Odd hidden_dim values are rejected even when divisible by num_heads.
-    assert not EstimatedSpringTransformerConfig(
+    assert not SpringTransformerConfig(
         spring_hidden_dim=33, spring_num_heads=1, force_hidden_dim=64, force_num_heads=8
     ).is_valid()
-    assert not EstimatedSpringTransformerConfig(
+    assert not SpringTransformerConfig(
         spring_hidden_dim=32, spring_num_heads=4, force_hidden_dim=21, force_num_heads=1
     ).is_valid()
 
@@ -182,7 +182,7 @@ def test_from_wandb_config_uses_defaults_for_missing_keys():
     assert TransformerAutoregressiveConfig.from_wandb_config({}) == TransformerAutoregressiveConfig.defaults()
     assert M5FrictionConfig.from_wandb_config({}) == M5FrictionConfig.defaults()
     assert M5TransformerConfig.from_wandb_config({}) == M5TransformerConfig.defaults()
-    assert EstimatedSpringTransformerConfig.from_wandb_config({}) == EstimatedSpringTransformerConfig.defaults()
+    assert SpringTransformerConfig.from_wandb_config({}) == SpringTransformerConfig.defaults()
 
 
 def test_from_wandb_config_applies_overrides():
@@ -201,9 +201,9 @@ def test_from_wandb_config_applies_overrides():
     assert config.history_size == 150
 
 
-def test_estimated_spring_from_wandb_config_reparameterizes_hidden_dim():
+def test_spring_from_wandb_config_reparameterizes_hidden_dim():
     """When *_hidden_dim_per_head is provided, hidden_dim is computed from num_heads."""
-    config = EstimatedSpringTransformerConfig.from_wandb_config(
+    config = SpringTransformerConfig.from_wandb_config(
         {
             "spring_num_heads": 4,
             "spring_hidden_dim_per_head": 8,
@@ -216,9 +216,9 @@ def test_estimated_spring_from_wandb_config_reparameterizes_hidden_dim():
     assert config.is_valid()
 
 
-def test_estimated_spring_from_wandb_config_explicit_hidden_dim_wins():
+def test_spring_from_wandb_config_explicit_hidden_dim_wins():
     """An explicit *_hidden_dim should override the per_head computation."""
-    config = EstimatedSpringTransformerConfig.from_wandb_config(
+    config = SpringTransformerConfig.from_wandb_config(
         {
             "spring_num_heads": 4,
             "spring_hidden_dim_per_head": 8,
@@ -228,9 +228,9 @@ def test_estimated_spring_from_wandb_config_explicit_hidden_dim_wins():
     assert config.spring_hidden_dim == 40
 
 
-def test_estimated_spring_from_wandb_config_reparameterizes_spring_stride():
+def test_spring_from_wandb_config_reparameterizes_spring_stride():
     """When spring_stride_multiplier is provided, spring_stride is computed from force_stride."""
-    config = EstimatedSpringTransformerConfig.from_wandb_config(
+    config = SpringTransformerConfig.from_wandb_config(
         {
             "force_stride": 3,
             "spring_stride_multiplier": 4,
@@ -240,9 +240,9 @@ def test_estimated_spring_from_wandb_config_reparameterizes_spring_stride():
     assert config.spring_stride % config.force_stride == 0
 
 
-def test_estimated_spring_from_wandb_config_explicit_spring_stride_wins():
+def test_spring_from_wandb_config_explicit_spring_stride_wins():
     """An explicit spring_stride should override the multiplier computation."""
-    config = EstimatedSpringTransformerConfig.from_wandb_config(
+    config = SpringTransformerConfig.from_wandb_config(
         {
             "force_stride": 3,
             "spring_stride_multiplier": 4,

@@ -1,8 +1,8 @@
-"""Tests for the estimated-spring transformer inference script."""
+"""Tests for the spring transformer inference script."""
 
 import torch
 
-from actuator_network.test_estimated_spring_transformer import _build_inference_window
+from actuator_network.test_spring_transformer import _build_inference_window
 
 
 def test_build_inference_window_zero_pads_early_samples():

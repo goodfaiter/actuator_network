@@ -14,7 +14,7 @@ Seven model families are supported:
 - **Autoregressive Transformer** — adds the (teacher-forced) force itself as an input channel; closed loop at inference
 - **Plain M5 physics model** — friction model fitted from data, no neural network
 - **M5 + Transformer** — physics-coupled: a Transformer predicts external torque, M5 computes friction, and the final output is `tau_motor - tau_friction` (train-only: saves the fitted friction params JSON, no TorchScript export)
-- **Estimated-Spring Transformer** — dual (spring + force) transformer pair for variable spring stiffness, trained via a W&B sweep
+- **Spring Transformer** — dual (spring + force) transformer pair for variable spring stiffness, trained via a W&B sweep
 
 ## Quick start
 
@@ -46,7 +46,7 @@ uv run train-transformer
 uv run train-m5
 uv run train-m5-transformer
 uv run train-transformer-autoregressive
-uv run train-estimated-spring-transformer
+uv run train-spring-transformer
 
 # Inference (test_* scripts read frequency/history/stride metadata baked into the exported model)
 uv run test-mlp
@@ -54,7 +54,7 @@ uv run test-rnn
 uv run test-transformer
 uv run test-m5
 uv run test-transformer-autoregressive
-uv run test-estimated-spring-transformer
+uv run test-spring-transformer
 ```
 
 The training hyperparameters live in `helpers/hyperparameters.py` as dataclasses (overridable from a W&B sweep config). Each entry point in `src/actuator_network/` hardcodes only its experiment MCAP path list, so treat them as experiment entry points rather than a generic CLI.

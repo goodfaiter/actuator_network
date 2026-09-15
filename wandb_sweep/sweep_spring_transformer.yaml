@@ -1,4 +1,4 @@
-program: src/actuator_network/train_estimated_spring_transformer.py
+program: src/actuator_network/train_spring_transformer.py
 method: bayes
 metric:
   name: val_loss
