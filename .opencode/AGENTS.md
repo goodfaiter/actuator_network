@@ -34,19 +34,26 @@ The trained model is wrapped in `ScaledModelWrapper`, which includes input/outpu
 │   ├── train_rnn.py                    # Entry point: train RNN
 │   ├── train_transformer.py            # Entry point: train Transformer
 │   ├── train_m5.py                     # Entry point: fit M5 friction model
-│   ├── train_m5_transformer.py         # Entry point: train M5 + Transformer physics-coupled model
+│   ├── train_m5_transformer.py         # Entry point: train M5 + Transformer jointly (JSON-only output, no TorchScript export)
 │   ├── train_transformer_autoregressive.py  # Entry point: train autoregressive Transformer
+│   ├── train_estimated_spring_transformer.py  # Entry point: train spring + force transformer pair (W&B sweep target)
+│   ├── test_mlp.py                     # Entry point: run MLP inference on test MCAPs
+│   ├── test_rnn.py                     # Entry point: run RNN inference on test MCAPs
 │   ├── test_transformer.py             # Entry point: run Transformer inference on test MCAPs
 │   ├── test_m5.py                      # Entry point: run M5 inference on test MCAPs
-│   ├── test_m5_transformer.py          # Entry point: run M5 + Transformer inference on test MCAPs
 │   ├── test_transformer_autoregressive.py   # Entry point: run autoregressive Transformer inference
+│   ├── test_estimated_spring_transformer.py # Entry point: run spring + force transformer inference
 │   ├── helpers/
 │   │   ├── mcap_to_pandas.py           # Read ROS2 MCAP → pandas DataFrame
-│   │   ├── pandas_processing.py        # Resample, derive load, filter, derivative
+│   │   ├── pandas_processing.py        # Resample (extrapolate_dataframe), derive load/force; dt derived from index
 │   │   ├── pandas_to_torch.py          # Build history windows / sequences, normalize
 │   │   ├── pandas_to_mcap.py           # Write DataFrame columns back to MCAP
-│   │   ├── torch_model.py              # MLP, RNN, Transformer, M5 physics definitions
-│   │   ├── trainer.py                  # Custom training loop with W&B logging
+│   │   ├── torch_model.py              # MLP, RNN, Transformer, M5 physics, spring transformer definitions
+│   │   ├── m5_model.py                 # M5 friction physics parameters (softplus-constrained)
+│   │   ├── data_pipeline.py            # Parallel MCAP loading + processed DataFrame parquet cache
+│   │   ├── rnn_pipeline.py             # Stateful (chunked) inference helpers
+│   │   ├── hyperparameters.py          # Dataclass configs for all entry points, sweep-overridable via wandb.config
+│   │   ├── trainer.py                  # Custom training loops (train / train_stateful) with W&B logging
 │   │   └── wrapper.py                  # ScaledModelWrapper + ModelSaver + TorchScript export
 │   └── plots/                          # Matplotlib scripts for paper figures
 │       ├── plot_contacts.py
@@ -56,7 +63,10 @@ The trained model is wrapped in `ScaledModelWrapper`, which includes input/outpu
 │       └── plot_rmse.py
 ├── data/                               # Data directory (gitignored)
 │   ├── training_data/                  # Input MCAP files
-│   └── output_data/                    # Saved models and predictions
+│   ├── output_data/                    # Saved models and predictions
+│   └── cache/processed_dataframes/     # Parquet cache of processed DataFrames (keyed by path + mtime + freq)
+├── tests/                              # pytest suite
+├── wandb_sweep/                        # W&B sweep configuration YAML
 └── .opencode/                          # opencode configuration
     └── AGENTS.md                       # This file
 ```
@@ -74,7 +84,7 @@ uv pip install -e . --link-mode=copy
 
 # Run commands
 uv run train-transformer
-uv run predict
+uv run test-transformer
 ```
 
 ### Console scripts
@@ -87,13 +97,13 @@ uv run predict
 - `train-m5`
 - `train-m5-transformer`
 - `train-transformer-autoregressive`
+- `train-estimated-spring-transformer`
 - `test-mlp`
 - `test-rnn`
 - `test-transformer`
 - `test-m5`
-- `test-m5-transformer`
 - `test-transformer-autoregressive`
-- `predict`
+- `test-estimated-spring-transformer`
 
 Run them with `uv run <script>`.
 
@@ -140,14 +150,14 @@ uv run train-transformer
 
 Each training script:
 
-1. Reads every MCAP in its hardcoded list.
+1. Reads every MCAP in its hardcoded train/val lists (hyperparameters come from dataclasses in `helpers/hyperparameters.py`, overridable via `wandb.config` during sweeps).
 2. Resamples to the configured frequency (usually 80 or 200 Hz).
-3. Computes derived columns (velocity, acceleration, dynamic force, load).
+3. Computes derived columns (velocity, acceleration, dynamic force, load). The derivative timestep `dt` is derived from the resampled index spacing, so data must be resampled (`extrapolate_dataframe`) before `process_dataframe`.
 4. Writes a `_processed.mcap` next to each input file.
 5. Builds history windows / sequences.
 6. Normalizes inputs and outputs.
-7. Loads separate training and validation MCAP files, normalizes using training statistics only, and trains with MSE loss, Adam optimizer, and logs to Weights & Biases. A configurable `val_fraction` of the validation set is used as one fixed random subset each epoch to save time.
-8. Saves the best, final, and periodic checkpoints as TorchScript `.pt` files in `data/output_data/`.
+7. Trains with MSE loss, Adam optimizer, and logs to Weights & Biases. A configurable `val_fraction` of the validation set is used as one fixed random subset each epoch to save time.
+8. Saves the best, final, and periodic checkpoints as TorchScript `.pt` files in `data/output_data/` (exception: `train_m5_transformer.py` persistently saves only the fitted M5 params JSON — the joint model is not exported as TorchScript).
 
 The `train_m5.py` and `train_m5_transformer.py` scripts now treat the motor gain `P` in `tau_motor = P * delta_position` as an optionally trainable parameter (positive-constrained via softplus). Set `trainable_motor_gain = True/False` in either script. All M5 friction coefficients (`K_v`, `K_c`, `K_m`, `K_e`, `K_cs`, `K_ms`, `K_es`) and the Stribeck parameters (`V_s`, `alpha`) are also positive-constrained via softplus. `train_m5_transformer.py` additionally loads a pre-fit M5 friction model from `data/output_data/m5_friction_params.json` as an initial guess, then jointly trains the Transformer and (optionally) the M5 friction parameters so that the final output is `tau_external_calculated = tau_motor - tau_friction(tau_external_predicted)`. It uses an auxiliary loss on the Transformer's `tau_external` prediction and gradient clipping, and saves the final fitted M5 parameters (including the learned motor gain) to `data/output_data/m5_joint_friction_params.json`. Set `m5_trainable = False` to keep the friction parameters frozen, and `motor_gain_trainable = False` to keep the gain frozen.
 
@@ -192,11 +202,11 @@ uv run test-mlp
 uv run test-rnn
 uv run test-transformer
 uv run test-m5
-uv run test-m5-transformer
 uv run test-transformer-autoregressive
+uv run test-estimated-spring-transformer
 ```
 
-Each `test-*.py` script loads the matching `best_<model>_latest.pt` TorchScript model (e.g., `best_transformer_latest.pt`), inspects its stored metadata (frequency, history size, stride, model type, input/output columns), builds the matching input tensor, runs the model, and writes a `<input>_<model>_predicted.mcap` with the new `*_predicted` columns.
+Each `test-*.py` script loads the matching `best_<model>_latest.pt` TorchScript model (e.g., `best_transformer_latest.pt`), reads its stored metadata — `input_columns`/`output_columns` and the `metadata` dict (`frequency`, `history_size`, `stride`) so preprocessing always matches training —, builds the matching input tensor, runs the model, and writes a `<input>_<model>_predicted.mcap` with the new `*_predicted` columns.
 
 | Model | Checkpoint loaded | MCAP suffix |
 |---|---|---|
@@ -205,7 +215,7 @@ Each `test-*.py` script loads the matching `best_<model>_latest.pt` TorchScript 
 | Transformer | `best_transformer_latest.pt` | `_transformer_predicted.mcap` |
 | Transformer (autoregressive) | `best_transformer_autoregressive_latest.pt` | `_transformer_autoregressive_predicted.mcap` |
 | M5 | `m5_friction_params.json` | `_m5_predicted.mcap` |
-| M5 + Transformer | `best_m5_transformer_latest.pt` | `_m5_transformer_predicted.mcap` |
+| Estimated-Spring Transformer | `best_estimated_spring_transformer_latest.pt` | `_estimated_spring_transformer_predicted.mcap` |
 
 ### 4. Generate plots
 
@@ -222,22 +232,25 @@ uv run python plot_rmse.py
 - Always import from the package namespace: `from actuator_network.helpers...`.
 - Keep model definitions in `helpers/torch_model.py`; do not add training logic there.
 - Keep data I/O in `helpers/mcap_to_pandas.py` and `helpers/pandas_to_mcap.py`.
-- Use `ScaledModelWrapper` as the deployment-facing model; it stores normalization statistics and model metadata as buffers so they are embedded in the TorchScript export.
-- Prefer `torch.jit.script` over `trace` for the wrapper because it handles control flow and RNN state.
+- Use `ScaledModelWrapper` as the deployment-facing model; normalization statistics and the RNN `h0` are registered buffers, and the remaining model metadata (`frequency`, `history_size`, `stride`) is stored in an annotated `metadata` dict so it is embedded in the TorchScript export.
+- `M5TransformerPhysicsModel` does not store its own statistics and is not exported as TorchScript: its `forward` takes the normalization stats as arguments. When calling that model directly (e.g. in training/tests), pass the flattened stats explicitly. `ScaledModelWrapper` only supports models whose `forward` takes a single `x` tensor (plus `h0` for RNNs).
+- Keep saving via `ModelSaver` (`script_and_save`), which uses `torch.jit.script` because it handles control flow and RNN state.
 - Do not commit `.pt`, `.pth`, MCAP files, `__pycache__`, `.env`, `.venv`, or `wandb/` runs (they are already gitignored).
 - Run `uv run ruff check src` and `uv run ruff format src` before finishing non-trivial changes.
 
 ## Known issues and gotchas
 
-1. **Training scripts are hardcoded experiment notebooks.** Paths, model configs, and input/output columns are defined inside `train_mlp.py`, `train_rnn.py`, `train_transformer.py`, and `train_m5_transformer.py`. They work as `uv run train-*` entry points but are not a generic CLI yet.
+1. **Entry points are thin experiment wrappers.** Hyperparameters live in dataclasses in `helpers/hyperparameters.py`; each train/test script only hardcodes its MCAP path list. They work as `uv run <script>` entry points but are not a generic CLI yet.
 
-2. **`process_inputs_time_series` zero-padding.** When the sequence start is before index `0`, the remaining entries are left as zeros. Make sure this behavior is intentional for your windowing strategy.
+2. **`process_inputs_time_series` drops incomplete windows.** Sliding windows are built with fancy indexing; sequences that would extend past the end are dropped (no zero-padding). The estimated-spring pipeline instead builds explicitly zero-padded windows (`_build_aligned_windows` / `_build_inference_window`) — an intentional difference.
 
-3. **RNN hidden state.** `ScaledModelWrapper` registers `h0` only when the wrapped model has an `rnn` attribute. For deployment, call `model.reset()` to clear state between sequences.
+3. **`process_dataframe` needs resampled data.** The derivative timestep `dt` is derived from the DataFrame index spacing, so always call `extrapolate_dataframe` before `process_dataframe`.
 
-4. **Plot scripts are hardcoded to specific experimental files.** They will fail on a fresh checkout without the matching `data/` contents. They are intended for reproducing paper figures, not as a generic plotting CLI.
+4. **RNN hidden state.** `ScaledModelWrapper` registers `h0` only when the wrapped model has an `rnn` attribute. For deployment, call `model.reset()` to clear state between sequences.
 
-5. **Tests exist under `tests/`.** The ROS2 environment installs pytest plugins that conflict with plain `uv run pytest`, so disable plugin autoloading when running tests:
+5. **Plot scripts are hardcoded to specific experimental files.** They will fail on a fresh checkout without the matching `data/` contents. They are intended for reproducing paper figures, not as a generic plotting CLI.
+
+6. **Tests exist under `tests/`.** The ROS2 environment installs pytest plugins that conflict with plain `uv run pytest`, so disable plugin autoloading when running tests:
    ```bash
    PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest tests/
    ```
@@ -256,13 +269,16 @@ uv run train-rnn
 uv run train-transformer
 uv run train-m5
 uv run train-m5-transformer
+uv run train-transformer-autoregressive
+uv run train-estimated-spring-transformer
 
 # Inference
 uv run test-mlp
 uv run test-rnn
 uv run test-transformer
 uv run test-m5
-uv run test-m5-transformer
+uv run test-transformer-autoregressive
+uv run test-estimated-spring-transformer
 
 # Plots
 cd src/actuator_network/plots

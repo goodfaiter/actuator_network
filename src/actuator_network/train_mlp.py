@@ -60,7 +60,6 @@ def train_mlp(
         frequency=inference_freq,
         history_size=config.num_hist,
         stride=config.stride,
-        prediction=config.prediction,
         input_columns=config.input_cols,
         output_columns=config.output_cols,
     )

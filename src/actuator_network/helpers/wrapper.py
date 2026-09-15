@@ -11,7 +11,7 @@ class ScaledModelWrapper(nn.Module):
     A PyTorch wrapper that:
     1. Applies input normalization & output denormalization
     2. Supports freezing the model
-    3. Can be JIT-traced (scaling is included in the exported model)
+    3. Can be exported as TorchScript via torch.jit.script (scaling is included in the exported model)
     """
 
     def __init__(
@@ -24,10 +24,6 @@ class ScaledModelWrapper(nn.Module):
         frequency: int = 1,
         history_size: int = 1,
         stride: int = 1,
-        spring_stride: int = 1,
-        spring_history_size: int = 1,
-        seq_length: int = 0,
-        prediction: bool = False,
         input_columns: list[str] = [],
         output_columns: list[str] = [],
     ):
@@ -41,15 +37,11 @@ class ScaledModelWrapper(nn.Module):
         self.register_buffer("input_std", input_std)
         self.register_buffer("output_mean", output_mean)
         self.register_buffer("output_std", output_std)
-        self.register_buffer("frequency", torch.tensor(frequency, dtype=torch.int32, requires_grad=False))
-        self.register_buffer("history_size", torch.tensor(history_size, dtype=torch.int32, requires_grad=False))
-        self.register_buffer("stride", torch.tensor(stride, dtype=torch.int32, requires_grad=False))
-        self.register_buffer("spring_stride", torch.tensor(spring_stride, dtype=torch.int32, requires_grad=False))
-        self.register_buffer(
-            "spring_history_size", torch.tensor(spring_history_size, dtype=torch.int32, requires_grad=False)
-        )
-        self.register_buffer("seq_length", torch.tensor(seq_length, dtype=torch.int32, requires_grad=False))
-        self.register_buffer("prediction_mode", torch.tensor(prediction, dtype=torch.bool, requires_grad=False))
+        self.metadata: dict[str, int] = {
+            "frequency": frequency,
+            "history_size": history_size,
+            "stride": stride,
+        }
         if hasattr(model, "rnn") and model.rnn is not None:
             self.register_buffer("h0", torch.zeros(model.num_layers, 1, model.hidden_size))
         self.input_columns = input_columns
@@ -78,36 +70,25 @@ class ScaledModelWrapper(nn.Module):
         """Freeze model weights and disable gradients."""
         self.eval()  # Disables dropout/BatchNorm training behavior
         self.model.eval()  # Disables dropout/BatchNorm training behavior
-        self._original_requires_grad = {}
-        for name, param in self.named_parameters():
-            self._original_requires_grad[name] = param.requires_grad
+        for param in self.parameters():
             param.requires_grad = False
 
     def unfreeze(self) -> None:
-        """Unfreeze model weights.
-
-        Restores each parameter's original ``requires_grad`` value from before
-        :meth:`freeze` was called. This preserves intentionally frozen submodules
-        (e.g., a fixed M5 physics prior).
-        """
+        """Unfreeze model weights and re-enable gradients on all parameters."""
         self.train()  # Re-enables BatchNorm running stats updates
         self.model.train()  # Re-enables BatchNorm running stats updates
-        if hasattr(self, "_original_requires_grad"):
-            for name, param in self.named_parameters():
-                if name in self._original_requires_grad:
-                    param.requires_grad = self._original_requires_grad[name]
-            del self._original_requires_grad
+        for param in self.parameters():
+            param.requires_grad = True
 
-    def trace_and_save(self, save_path: str) -> torch.jit.ScriptModule:
+    def script_and_save(self, save_path: str) -> torch.jit.ScriptModule:
         """
-        Trace the model (including scaling layers) and save as TorchScript.
+        Script the model (including scaling layers) with torch.jit.script and save as TorchScript.
         Args:
-            example_input: A sample input tensor (for tracing)
-            save_path: Where to save the traced model (.pt or .pth)
+            save_path: Where to save the scripted model (.pt or .pth)
         """
-        tracedmodel = torch.jit.script(self)
-        tracedmodel.save(save_path)
-        return tracedmodel
+        scripted_model = torch.jit.script(self)
+        scripted_model.save(save_path)
+        return scripted_model
 
 
 class ModelSaver:
@@ -136,12 +117,12 @@ class ModelSaver:
             suffix = suffix[1:]
         self._wrapped_model.freeze()
         save_path = self._file_prefix + suffix + ".pt"
-        self._wrapped_model.trace_and_save(save_path)
+        self._wrapped_model.script_and_save(save_path)
         self._wrapped_model.unfreeze()
 
     def save_latest(self, prefix: str) -> None:
         """Save the model as 'latest.pt' in the root folder"""
         self._wrapped_model.freeze()
         save_path = os.path.join(self._root_folder, f"{prefix}latest.pt")
-        self._wrapped_model.trace_and_save(save_path)
+        self._wrapped_model.script_and_save(save_path)
         self._wrapped_model.unfreeze()

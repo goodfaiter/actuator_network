@@ -55,7 +55,6 @@ def _build_scripted_plain_m5(m5: M5FrictionModel, data_freq: int, device: torch.
         frequency=data_freq,
         history_size=1,
         stride=1,
-        prediction=False,
         input_columns=INPUT_COLUMNS,
         output_columns=OUTPUT_COLUMNS,
     )

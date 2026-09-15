@@ -12,7 +12,6 @@ from actuator_network.helpers.m5_model import M5FrictionModel
 from actuator_network.helpers.pandas_to_torch import apply_normalization, normalize_tensor
 from actuator_network.helpers.torch_model import M5TransformerPhysicsModel, TorchTransformerModel
 from actuator_network.helpers.trainer import data_generator
-from actuator_network.helpers.wrapper import ModelSaver, ScaledModelWrapper
 
 M5_PARAMS_PATH = "/workspace/data/output_data/m5_friction_params.json"
 MOTOR_GAIN_DEFAULT = 4.2
@@ -63,10 +62,15 @@ def train_m5_transformer(
     outputs: torch.Tensor,
     val_inputs: torch.Tensor,
     val_outputs: torch.Tensor,
-    model_saver: ModelSaver,
-    latest_prefix: str = "",
+    input_mean: torch.Tensor,
+    input_std: torch.Tensor,
+    output_mean: torch.Tensor,
+    output_std: torch.Tensor,
 ) -> None:
     """Train the combined M5 + Transformer model with an auxiliary loss and gradient clipping.
+
+    Nothing is checkpointed: the only persisted artifact for this pipeline is the
+    jointly fitted M5 params JSON written by main() after training.
 
     Args:
         config: Hyperparameter configuration.
@@ -75,13 +79,20 @@ def train_m5_transformer(
         outputs: Normalized target tensor of shape (num_samples, 1, output_dim).
         val_inputs: Normalized validation input tensor.
         val_outputs: Normalized validation target tensor.
-        model_saver: ModelSaver instance for checkpointing.
-        latest_prefix: Prefix inserted before "best_"/"final_" in latest checkpoint names.
+        input_mean: Training input mean of shape (1, input_dim), passed into the physics model.
+        input_std: Training input standard deviation of shape (1, input_dim).
+        output_mean: Training output mean of shape (1, output_dim).
+        output_std: Training output standard deviation of shape (1, output_dim).
     """
     wandb.log({"Model": str(model)})
 
     criterion = torch.nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
+
+    flat_input_mean = input_mean.view(-1)
+    flat_input_std = input_std.view(-1)
+    flat_output_mean = output_mean.view(-1)
+    flat_output_std = output_std.view(-1)
 
     # Compute a single fixed random validation subset to save time.
     num_val_samples = val_inputs.shape[0]
@@ -107,7 +118,9 @@ def train_m5_transformer(
         for batch_inputs, batch_outputs in data_generator(inputs, outputs, config.batch_size):
             optimizer.zero_grad()
 
-            pred = model(batch_inputs)  # [Batch, 1, 4]
+            pred = model(
+                batch_inputs, flat_input_mean, flat_input_std, flat_output_mean, flat_output_std
+            )  # [Batch, 1, 4]
 
             # Channel 0 is the main predicted force; channel 3 is the Transformer's tau_external pred.
             final_loss = criterion(pred[:, :, 0:1], batch_outputs)
@@ -130,7 +143,9 @@ def train_m5_transformer(
         # Validation phase
         model.eval()
         with torch.no_grad():
-            val_pred = model(val_inputs_subset)  # [Batch, 1, 4]
+            val_pred = model(
+                val_inputs_subset, flat_input_mean, flat_input_std, flat_output_mean, flat_output_std
+            )  # [Batch, 1, 4]
 
             val_final_loss = criterion(val_pred[:, :, 0:1], val_outputs_subset).item()
             val_aux_loss = criterion(val_pred[:, :, 3:4], val_outputs_subset).item()
@@ -154,19 +169,10 @@ def train_m5_transformer(
             }
         )
 
-        # Save every 100 epochs
-        if (epoch + 1) % 100 == 0:
-            model_saver.save_model(f"_epoch_{epoch + 1}")
-
-        # Save best model
+        # Track the best validation loss for logging only; nothing is checkpointed.
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            model_saver.save_model("_best")
-            model_saver.save_latest(f"best_{latest_prefix}")
             print(f"New best model! Val loss: {best_val_loss:.4f}")
-
-    model_saver.save_model("_final")
-    model_saver.save_latest(f"final_{latest_prefix}")
 
 
 def main():
@@ -263,28 +269,10 @@ def main():
     combined_model = M5TransformerPhysicsModel(
         m5=m5_model,
         transformer=transformer,
-        input_mean=inputs_mean,
-        input_std=inputs_std,
-        output_mean=outputs_mean,
-        output_std=outputs_std,
         delta_position_idx=delta_position_idx,
         velocity_idx=velocity_idx,
     )
 
-    wrapped_model = ScaledModelWrapper(
-        combined_model,
-        inputs_mean,
-        inputs_std,
-        outputs_mean,
-        outputs_std,
-        frequency=config.inference_freq,
-        history_size=config.history_size,
-        stride=config.stride,
-        prediction=config.prediction,
-        input_columns=config.input_cols,
-        output_columns=config.model_output_cols,
-    )
-    model_saver = ModelSaver(wrapped_model, OUTPUT_DIR)
     train_m5_transformer(
         config,
         combined_model,
@@ -292,8 +280,10 @@ def main():
         outputs_normalized,
         val_inputs_normalized,
         val_outputs_normalized,
-        model_saver=model_saver,
-        latest_prefix="m5_transformer_",
+        inputs_mean,
+        inputs_std,
+        outputs_mean,
+        outputs_std,
     )
 
     # Save the jointly fitted M5 parameters for inspection.

@@ -58,8 +58,6 @@ def train_rnn(
         frequency=config.data_freq,
         history_size=config.seq_length,
         stride=config.stride,
-        seq_length=config.seq_length,
-        prediction=config.prediction,
         input_columns=config.input_cols,
         output_columns=config.output_cols,
     )

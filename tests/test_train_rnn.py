@@ -70,8 +70,6 @@ def test_rnn_train_and_predict_smoke():
             frequency=freq,
             history_size=seq_length,
             stride=1,
-            seq_length=seq_length,
-            prediction=False,
             input_columns=input_cols,
             output_columns=output_cols,
         )

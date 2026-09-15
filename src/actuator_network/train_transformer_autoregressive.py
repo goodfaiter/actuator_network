@@ -32,7 +32,6 @@ def build_autoregressive_dataset(
     output_cols: list[str],
     history_size: int,
     stride: int,
-    prediction: bool,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Build teacher-forced input/output tensors from processed DataFrames.
@@ -59,7 +58,6 @@ def build_autoregressive_dataset(
             shifted_features,
             history_size=history_size,
             stride=stride,
-            prediction=prediction,
         )
         outputs = process_outputs_time_series(
             data_tensor[:, output_indices],
@@ -93,7 +91,6 @@ def train_transformer_autoregressive(
         output_cols=config.output_cols,
         history_size=config.history_size,
         stride=config.stride,
-        prediction=config.prediction,
         device=device,
     )
     val_inputs, val_outputs = build_autoregressive_dataset(
@@ -102,7 +99,6 @@ def train_transformer_autoregressive(
         output_cols=config.output_cols,
         history_size=config.history_size,
         stride=config.stride,
-        prediction=config.prediction,
         device=device,
     )
 
@@ -131,7 +127,6 @@ def train_transformer_autoregressive(
         frequency=config.inference_freq,
         history_size=config.history_size,
         stride=config.stride,
-        prediction=config.prediction,
         input_columns=config.input_cols,
         output_columns=config.output_cols,
     )

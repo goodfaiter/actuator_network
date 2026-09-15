@@ -134,7 +134,6 @@ class TorchTransformerModel(torch.nn.Module):
 
         # Transformer processing
         x = self.transformer(x, mask=self.causal_mask, is_causal=True)
-        # x = self.transformer(x)
 
         # Take only the last timestep and output
         x = x[:, -1, :]  # Take last timestep
@@ -150,6 +149,10 @@ class M5TransformerPhysicsModel(torch.nn.Module):
     denormalized and fed into the M5 friction model as tau_external. M5 returns tau_friction,
     and the final output is tau_external_calculated = tau_motor - tau_friction.
 
+    Normalization statistics are not stored by this model; the ScaledModelWrapper passes
+    its own buffers (flattened to 1-D) into the forward call, so the wrapper is the single
+    source of truth for normalization.
+
     The forward pass returns a 4-channel output:
         0: tau_external_calculated
         1: tau_motor
@@ -161,36 +164,33 @@ class M5TransformerPhysicsModel(torch.nn.Module):
         self,
         m5: M5FrictionModel,
         transformer: TorchTransformerModel,
-        input_mean: torch.Tensor,
-        input_std: torch.Tensor,
-        output_mean: torch.Tensor,
-        output_std: torch.Tensor,
         delta_position_idx: int,
         velocity_idx: int,
     ) -> None:
         super().__init__()
         self.m5 = m5
         self.transformer = transformer
-        # normalize_tensor returns [1, feature_dim] statistics; flatten to 1D for indexing.
-        self.register_buffer("input_mean", input_mean.view(-1))
-        self.register_buffer("input_std", input_std.view(-1))
-        self.register_buffer("output_mean", output_mean.view(-1))
-        self.register_buffer("output_std", output_std.view(-1))
         self.delta_position_idx = delta_position_idx
         self.velocity_idx = velocity_idx
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        input_mean: torch.Tensor,
+        input_std: torch.Tensor,
+        output_mean: torch.Tensor,
+        output_std: torch.Tensor,
+    ) -> torch.Tensor:
         # x shape: [Batch, History, Feature Dim] (normalized by ScaledModelWrapper)
+        # input_mean/std: [Feature Dim]; output_mean/std: [Output Channels]
         x_last = x[:, -1, :]
 
         # Un-normalize the last timestep for the physical M5 inputs
         delta_position_raw = (
-            x_last[:, self.delta_position_idx] * self.input_std[self.delta_position_idx]
-            + self.input_mean[self.delta_position_idx]
+            x_last[:, self.delta_position_idx] * input_std[self.delta_position_idx]
+            + input_mean[self.delta_position_idx]
         )
-        velocity_raw = (
-            x_last[:, self.velocity_idx] * self.input_std[self.velocity_idx] + self.input_mean[self.velocity_idx]
-        )
+        velocity_raw = x_last[:, self.velocity_idx] * input_std[self.velocity_idx] + input_mean[self.velocity_idx]
         tau_motor = self.m5.compute_tau_motor(delta_position_raw)
 
         # Transformer predicts the normalized tau_external
@@ -198,7 +198,7 @@ class M5TransformerPhysicsModel(torch.nn.Module):
 
         # Denormalize for M5, which expects physical units. The model is designed for a single
         # output column, so we index the first (and only) output statistic.
-        tau_external_pred_phys = tau_external_pred_norm * self.output_std[0] + self.output_mean[0]
+        tau_external_pred_phys = tau_external_pred_norm * output_std[0] + output_mean[0]
         tau_external_pred_phys = tau_external_pred_phys.squeeze(1).squeeze(1)
 
         # M5 predicts friction from velocity, motor torque, and predicted external torque
@@ -209,10 +209,10 @@ class M5TransformerPhysicsModel(torch.nn.Module):
 
         # Normalize all quantities back so ScaledModelWrapper can denormalize consistently.
         # All four channels share the same physical unit, so they use the same mean/std.
-        tau_external_calc_norm = (tau_external_calc_phys - self.output_mean[0]) / self.output_std[0]
-        tau_motor_norm = (tau_motor - self.output_mean[0]) / self.output_std[0]
-        tau_friction_norm = (tau_friction - self.output_mean[0]) / self.output_std[0]
-        tau_external_pred_norm = (tau_external_pred_phys - self.output_mean[0]) / self.output_std[0]
+        tau_external_calc_norm = (tau_external_calc_phys - output_mean[0]) / output_std[0]
+        tau_motor_norm = (tau_motor - output_mean[0]) / output_std[0]
+        tau_friction_norm = (tau_friction - output_mean[0]) / output_std[0]
+        tau_external_pred_norm = (tau_external_pred_phys - output_mean[0]) / output_std[0]
 
         output = torch.stack(
             [tau_external_calc_norm, tau_motor_norm, tau_friction_norm, tau_external_pred_norm], dim=-1
@@ -257,7 +257,7 @@ class PlainM5PhysicsModel(torch.nn.Module):
 class SpringCoefficientHead(torch.nn.Module):
     """Small MLP that reconstructs a spring coefficient from a latent vector.
 
-    Architecture: ``latent_dim -> 8 -> 1`` with ReLU activation on the hidden
+    Architecture: ``latent_dim -> 4 -> 1`` with ReLU activation on the hidden
     layer. This head provides the auxiliary spring-coefficient target while the
     main latent representation is fed to the force transformer.
     """
@@ -364,7 +364,7 @@ class SpringTransformerForceEstimator(torch.nn.Module):
         self.spring_update_counter.zero_()
 
     def _is_moving(self, velocity: torch.Tensor) -> torch.Tensor:
-        return velocity > self.velocity_threshold
+        return velocity.abs() > self.velocity_threshold
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x shape: [1, History, Feature] (already normalized by ScaledModelWrapper)

@@ -70,7 +70,6 @@ def process_mcap_file(
             data_tensor[:, input_indices],
             stride=stride,
             history_size=history_size,
-            prediction=prediction,
         )
         outputs = process_outputs_time_series(
             data_tensor[:, output_indices],

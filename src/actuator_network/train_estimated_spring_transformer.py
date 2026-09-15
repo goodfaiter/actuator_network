@@ -387,9 +387,6 @@ def train_estimated_spring_transformer(
         frequency=inference_freq,
         history_size=config.force_history_size,
         stride=config.force_stride,
-        spring_stride=config.spring_stride,
-        spring_history_size=config.spring_history_size,
-        prediction=config.prediction,
         input_columns=INPUT_COLS,
         output_columns=output_cols,
     )
