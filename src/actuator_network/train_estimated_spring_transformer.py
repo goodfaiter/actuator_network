@@ -64,7 +64,7 @@ def _build_frozen_spring_windows(
     last_moving_window = torch.zeros_like(normal_windows[0])
 
     for i in range(num_samples):
-        if normal_windows[i, -1, velocity_idx] > velocity_threshold:
+        if torch.abs(normal_windows[i, -1, velocity_idx]) > velocity_threshold:
             last_moving_window = normal_windows[i].clone()
         spring_windows[i] = last_moving_window
 

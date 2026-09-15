@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
+from actuator_network.helpers.hyperparameters import M5TransformerConfig
 from actuator_network.helpers.m5_model import M5FrictionModel
 from actuator_network.helpers.torch_model import M5TransformerPhysicsModel, TorchTransformerModel
 from actuator_network.helpers.wrapper import ModelSaver, ScaledModelWrapper
@@ -239,19 +240,17 @@ def test_train_m5_transformer_updates_m5_when_trainable():
         val_outputs = torch.randn(16, 1, 1)
         initial_kv = float(torch.nn.functional.softplus(combined.m5.K_v_log).item())
 
+        config = M5TransformerConfig(num_epochs=2, batch_size=16, aux_weight=0.1, max_grad_norm=1.0)
         with patch("actuator_network.train_m5_transformer.wandb") as mock_wandb:
             mock_wandb.init.return_value = MagicMock()
             train_m5_transformer(
+                config,
                 combined,
                 inputs,
                 outputs,
                 val_inputs,
                 val_outputs,
                 model_saver=saver,
-                num_epochs=2,
-                batch_size=16,
-                aux_weight=0.1,
-                max_grad_norm=1.0,
             )
 
         final_kv = float(torch.nn.functional.softplus(combined.m5.K_v_log).item())
@@ -276,19 +275,17 @@ def test_train_m5_transformer_keeps_m5_fixed_when_not_trainable():
         val_outputs = torch.randn(16, 1, 1)
         initial_kv = float(torch.nn.functional.softplus(combined.m5.K_v_log).item())
 
+        config = M5TransformerConfig(num_epochs=2, batch_size=16, aux_weight=0.1, max_grad_norm=1.0)
         with patch("actuator_network.train_m5_transformer.wandb") as mock_wandb:
             mock_wandb.init.return_value = MagicMock()
             train_m5_transformer(
+                config,
                 combined,
                 inputs,
                 outputs,
                 val_inputs,
                 val_outputs,
                 model_saver=saver,
-                num_epochs=2,
-                batch_size=16,
-                aux_weight=0.1,
-                max_grad_norm=1.0,
             )
 
         final_kv = float(torch.nn.functional.softplus(combined.m5.K_v_log).item())
@@ -316,19 +313,17 @@ def test_train_m5_transformer_updates_motor_gain_when_trainable():
         val_outputs = torch.randn(16, 1, 1)
         initial_gain = _initial_motor_gain(combined)
 
+        config = M5TransformerConfig(num_epochs=2, batch_size=16, aux_weight=0.1, max_grad_norm=1.0)
         with patch("actuator_network.train_m5_transformer.wandb") as mock_wandb:
             mock_wandb.init.return_value = MagicMock()
             train_m5_transformer(
+                config,
                 combined,
                 inputs,
                 outputs,
                 val_inputs,
                 val_outputs,
                 model_saver=saver,
-                num_epochs=2,
-                batch_size=16,
-                aux_weight=0.1,
-                max_grad_norm=1.0,
             )
 
         final_gain = _initial_motor_gain(combined)
@@ -355,19 +350,17 @@ def test_train_m5_transformer_keeps_motor_gain_fixed_when_not_trainable():
         val_outputs = torch.randn(16, 1, 1)
         initial_gain = _initial_motor_gain(combined)
 
+        config = M5TransformerConfig(num_epochs=2, batch_size=16, aux_weight=0.1, max_grad_norm=1.0)
         with patch("actuator_network.train_m5_transformer.wandb") as mock_wandb:
             mock_wandb.init.return_value = MagicMock()
             train_m5_transformer(
+                config,
                 combined,
                 inputs,
                 outputs,
                 val_inputs,
                 val_outputs,
                 model_saver=saver,
-                num_epochs=2,
-                batch_size=16,
-                aux_weight=0.1,
-                max_grad_norm=1.0,
             )
 
         final_gain = _initial_motor_gain(combined)
