@@ -20,7 +20,7 @@ import torch.nn as nn
 
 import wandb
 from actuator_network.helpers.data_pipeline import load_mcap_dataframes_parallel_cached
-from actuator_network.helpers.hyperparameters import EstimatedSpringTransformerConfig
+from actuator_network.helpers.hyperparameters import SpringTransformerConfig
 from actuator_network.helpers.pandas_to_mcap import data_df_to_mcap
 from actuator_network.helpers.pandas_to_torch import (
     apply_normalization,
@@ -131,7 +131,7 @@ def _build_aligned_windows(
     return spring_windows, force_windows
 
 
-def compute_estimated_spring_dataset_stats(
+def compute_spring_dataset_stats(
     dataframes: list[pd.DataFrame],
     file_labels: list[tuple[str, float]],
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -181,7 +181,7 @@ def compute_estimated_spring_dataset_stats(
     )
 
 
-def build_estimated_spring_dataset(
+def build_spring_dataset(
     dataframes: list[pd.DataFrame],
     file_labels: list[tuple[str, float]],
     spring_history_size: int,
@@ -210,7 +210,7 @@ def build_estimated_spring_dataset(
         velocity_bounds: Normalized-domain ``(threshold_lo, threshold_hi)`` outside
             which the spring buffer updates.
         stats: Normalization statistics from
-            :func:`compute_estimated_spring_dataset_stats` (training set stats;
+            :func:`compute_spring_dataset_stats` (training set stats;
             pass the same stats for validation).
         device: Torch device to place tensors on.
 
@@ -318,8 +318,8 @@ def make_input_noise_transform(noise_std: float):
     return transform
 
 
-def train_estimated_spring_transformer(
-    config: EstimatedSpringTransformerConfig,
+def train_spring_transformer(
+    config: SpringTransformerConfig,
     train_dataframes: list[pd.DataFrame],
     val_dataframes: list[pd.DataFrame],
     mcap_files: list[tuple[str, float]],
@@ -327,7 +327,7 @@ def train_estimated_spring_transformer(
     device: torch.device,
     latest_prefix: str,
 ) -> None:
-    """Train an estimated-spring transformer with the given configuration.
+    """Train an spring transformer with the given configuration.
 
     Args:
         config: Hyperparameter configuration.
@@ -342,7 +342,7 @@ def train_estimated_spring_transformer(
     output_cols = [OUTPUT_COL, SPRING_COL]
 
     print("Computing training dataset statistics...")
-    stats = compute_estimated_spring_dataset_stats(train_dataframes, mcap_files)
+    stats = compute_spring_dataset_stats(train_dataframes, mcap_files)
     input_mean, input_std, force_output_mean, force_output_std, spring_output_mean, spring_output_std = stats
 
     velocity_idx = INPUT_COLS.index("measured_velocity_rad_per_sec_data")
@@ -356,22 +356,20 @@ def train_estimated_spring_transformer(
         f"spring_history_size={config.spring_history_size}, spring_stride={config.spring_stride}, "
         f"force_history_size={config.force_history_size}, force_stride={config.force_stride})..."
     )
-    train_spring_windows, train_force_windows, train_spring_targets, train_force_targets = (
-        build_estimated_spring_dataset(
-            train_dataframes,
-            mcap_files,
-            spring_history_size=config.spring_history_size,
-            history_size=config.force_history_size,
-            spring_stride=config.spring_stride,
-            force_stride=config.force_stride,
-            velocity_bounds=velocity_bounds,
-            stats=stats,
-            device=device,
-        )
+    train_spring_windows, train_force_windows, train_spring_targets, train_force_targets = build_spring_dataset(
+        train_dataframes,
+        mcap_files,
+        spring_history_size=config.spring_history_size,
+        history_size=config.force_history_size,
+        spring_stride=config.spring_stride,
+        force_stride=config.force_stride,
+        velocity_bounds=velocity_bounds,
+        stats=stats,
+        device=device,
     )
 
     print("Building spring/force validation dataset...")
-    val_spring_windows, val_force_windows, val_spring_targets, val_force_targets = build_estimated_spring_dataset(
+    val_spring_windows, val_force_windows, val_spring_targets, val_force_targets = build_spring_dataset(
         val_dataframes,
         val_mcap_files,
         spring_history_size=config.spring_history_size,
@@ -483,7 +481,7 @@ def main():
     if wandb.run is None:
         wandb.init(project=DEFAULT_WANDB_PROJECT)
 
-    config = EstimatedSpringTransformerConfig.from_wandb_config(wandb.config)
+    config = SpringTransformerConfig.from_wandb_config(wandb.config)
     print(f"Using configuration: {config}")
 
     if not config.is_valid():
@@ -525,13 +523,11 @@ def main():
         data_df_to_mcap(df, mcap_file_path.replace(".mcap", "_processed.mcap"))
 
     latest_prefix = (
-        f"estimated_spring_transformer_sweep_{wandb.run.id}_"
-        if wandb.run.sweep_id is not None
-        else "estimated_spring_transformer_"
+        f"spring_transformer_sweep_{wandb.run.id}_" if wandb.run.sweep_id is not None else "spring_transformer_"
     )
 
     print("Running training...")
-    train_estimated_spring_transformer(
+    train_spring_transformer(
         config,
         train_dataframes,
         val_dataframes,
