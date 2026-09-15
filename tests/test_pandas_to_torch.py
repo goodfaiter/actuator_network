@@ -16,7 +16,7 @@ def test_process_inputs_time_series_shape_and_forward_window():
     history_size = 3
     stride = 1
 
-    result = process_inputs_time_series(data, history_size=history_size, stride=stride, prediction=False)
+    result = process_inputs_time_series(data, history_size=history_size, stride=stride)
 
     assert result.shape == (3, 3, 2)
 
@@ -38,7 +38,7 @@ def test_process_inputs_time_series_stride_and_drops_incomplete():
     history_size = 3
     stride = 2
 
-    result = process_inputs_time_series(data, history_size=history_size, stride=stride, prediction=False)
+    result = process_inputs_time_series(data, history_size=history_size, stride=stride)
 
     # Need indices 0, 2, 4 -> batch_size 4 cannot provide index 4, so no valid sequences
     assert result.shape == (0, 3, 1)
@@ -57,7 +57,7 @@ def test_process_outputs_time_series_matches_last_input_index():
     history_size = 3
     stride = 1
 
-    inputs = process_inputs_time_series(data, history_size=history_size, stride=stride, prediction=False)
+    inputs = process_inputs_time_series(data, history_size=history_size, stride=stride)
     outputs = process_outputs_time_series(data, history_size=history_size, stride=stride)
 
     assert outputs.shape == (3, 1, 2)

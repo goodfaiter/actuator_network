@@ -39,39 +39,13 @@ def apply_normalization(tensor: torch.Tensor, mean: torch.Tensor, std: torch.Ten
         return (tensor - mean) / std
 
 
-def process_inputs(data: torch.Tensor, stride: int, num_hist: int, prediction: bool) -> torch.Tensor:
-    """Create history vectors
-    Args:
-        data (torch.Tensor): Input tensor of shape (batch_size, feature_dim)
-        stride (int): Stride between history steps
-        num_hist (int): Number of history steps to include
-        prediction (bool): Whether this is for prediction or estimation (affects offset)
-    Returns:
-        torch.Tensor: Tensor with history vectors of shape (batch_size, feature_dim * num_hist)
-    """
-    batch_size, feature_dim = data.shape
-    history_vector = []
-    for i in range(batch_size):
-        if i + (num_hist + (0 if prediction else -1)) * stride >= batch_size:
-            break
-        one_step = torch.zeros((num_hist * feature_dim), device=data.device)
-        for j in range(num_hist):
-            one_step[j * feature_dim : (j + 1) * feature_dim] = data[i + j * stride]
-        history_vector.append(one_step)
-
-    hist_tensor = torch.stack(history_vector)
-
-    return hist_tensor.to(data.device)
-
-
-def process_inputs_time_series(data: torch.Tensor, history_size: int, stride: int, prediction: bool) -> torch.Tensor:
+def process_inputs_time_series(data: torch.Tensor, history_size: int, stride: int) -> torch.Tensor:
     """Turn inputs into short sequences of time series looking forward.
 
     Args:
         data (torch.Tensor): Input tensor of shape (batch_size, feature_dim)
         history_size (int): Length of the input sequences
         stride (int): Stride between history steps
-        prediction (bool): Whether this is for prediction or estimation (currently unused)
 
     Returns:
         torch.Tensor: Tensor with input sequences of shape (batch_size, history_size, feature_dim)
@@ -85,32 +59,6 @@ def process_inputs_time_series(data: torch.Tensor, history_size: int, stride: in
     indices = torch.arange(num_sequences, device=data.device).unsqueeze(1) + offsets.unsqueeze(0)
 
     return data[indices]
-
-
-def process_outputs(data: torch.Tensor, stride: int, num_hist: int, prediction: bool) -> torch.Tensor:
-    """Create future output vectors
-    Args:
-        data (torch.Tensor): Input tensor of shape (batch_size, feature_dim)
-        stride (int): Stride between future steps
-        num_hist (int): Number of history steps
-        prediction (bool): Whether this is for prediction or estimation (affects offset)
-    Returns:
-        torch.Tensor: Tensor with future output vectors of shape (batch_size, feature_dim)
-    """
-    batch_size, feature_dim = data.shape
-    history_vector = []
-    for i in range(batch_size):
-        if i + (num_hist + (0 if prediction else -1)) * stride >= batch_size:
-            break
-        one_step = torch.zeros((feature_dim), device=data.device)
-        one_step[:] = data[
-            i + (num_hist + (0 if prediction else -1)) * stride
-        ]  # + since we're predicting the next step after history
-        history_vector.append(one_step)
-
-    hist_tensor = torch.stack(history_vector)
-
-    return hist_tensor.to(data.device)
 
 
 def process_outputs_time_series(data: torch.Tensor, stride: int, history_size: int) -> torch.Tensor:
@@ -149,23 +97,3 @@ def pandas_to_torch(df, device="cpu"):
     tensor = torch.tensor(np_array, dtype=torch.float32, device=device)
 
     return col_indices, tensor
-
-
-class TimeSeriesDataset(torch.utils.data.Dataset):
-    def __init__(self, data: torch.Tensor, sequence_length=80):
-        """
-        data: tensor array of shape (num_samples, num_features)
-        sequence_length: number of timesteps to use for prediction
-        """
-        self.sequence_length = sequence_length
-        self.data = data
-
-    def __len__(self):
-        return len(self.data) - self.sequence_length
-
-    def __getitem__(self, idx):
-        x = self.data[idx : idx + self.sequence_length]  # shape: (80, 3)
-
-        y = self.data[idx + self.sequence_length]  # shape: (3,)
-
-        return x, y

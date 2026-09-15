@@ -39,7 +39,6 @@ def _make_dummy_scripted_model(tmpdir: str) -> str:
         frequency=80,
         history_size=history_size,
         stride=1,
-        prediction=False,
         input_columns=[
             "delta_position_rad_data",
             "measured_velocity_rad_per_sec_data",
@@ -61,7 +60,7 @@ def test_run_transformer_autoregressive_inference_creates_output():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         model_path = _make_dummy_scripted_model(tmpdir)
-        output_paths = run_transformer_autoregressive_inference(model_path, [TEST_MCAP], data_freq=80)
+        output_paths = run_transformer_autoregressive_inference(model_path, [TEST_MCAP])
 
         assert len(output_paths) == 1
         assert os.path.isfile(output_paths[0])

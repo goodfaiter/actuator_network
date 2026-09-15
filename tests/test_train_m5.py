@@ -39,7 +39,7 @@ def test_m5_forward_matches_formula():
     eps = 1e-6
     v_s = torch.nn.functional.softplus(torch.tensor(0.0)) + eps
     alpha = torch.nn.functional.softplus(torch.tensor(0.0)) + eps
-    static = 0.1 * velocity + 0.2 + torch.abs(0.3 * tau_motor - 0.4 * tau_external)
+    static = 0.1 * torch.abs(velocity) + 0.2 + torch.abs(0.3 * tau_motor - 0.4 * tau_external)
     stribeck = torch.exp(-(torch.abs(velocity / v_s).clamp_min(1e-8) ** alpha))
     expected = static + stribeck * (0.5 + torch.abs(0.6 * tau_motor - 0.7 * tau_external))
 

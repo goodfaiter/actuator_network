@@ -57,7 +57,6 @@ def train_transformer(
         frequency=config.inference_freq,
         history_size=config.history_size,
         stride=config.stride,
-        prediction=config.prediction,
         input_columns=config.input_cols,
         output_columns=config.output_cols,
     )

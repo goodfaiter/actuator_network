@@ -101,11 +101,13 @@ def test_build_estimated_spring_dataset_includes_all_samples():
 
     # First windows are zero-padded before the current timestep.
     first_features = torch.tensor(
-        df.iloc[0][[
-            "measured_position_rad_data",
-            "desired_position_rad_data",
-            "measured_velocity_rad_per_sec_data",
-        ]].to_numpy(),
+        df.iloc[0][
+            [
+                "measured_position_rad_data",
+                "desired_position_rad_data",
+                "measured_velocity_rad_per_sec_data",
+            ]
+        ].to_numpy(),
         dtype=torch.float32,
     )
     assert torch.allclose(spring_windows[0, -1], first_features)
@@ -340,9 +342,6 @@ def test_wrapped_spring_transformer_force_estimator_scriptable():
         frequency=100,
         history_size=history_size,
         stride=force_stride,
-        spring_stride=spring_stride,
-        spring_history_size=spring_history_size,
-        prediction=False,
         input_columns=["delta_position_rad_data", "measured_velocity_rad_per_sec_data"],
         output_columns=["tendon_bota_force_newton_data", "spring_coeff"],
     )
@@ -480,6 +479,58 @@ def test_spring_transformer_force_estimator_stride_rate():
     # Call 2 is a spring sample again: buffer should update to input_b.
     _ = model(input_b)
     assert torch.allclose(model.spring_buffer[0, -1, :], input_b[0, -1, :])
+
+
+def test_spring_transformer_force_estimator_negative_velocity_updates_buffer():
+    """A negative velocity with magnitude above the threshold should also update the buffer."""
+    device = torch.device("cpu")
+    spring_history_size = 10
+    history_size = 5
+    latent_dim = 16
+
+    model_transformer = TorchTransformerModel(
+        input_size=2,
+        output_size=latent_dim,
+        num_layers=1,
+        history_size=spring_history_size,
+        num_heads=2,
+        hidden_dim=16,
+        device=device,
+    )
+    force_transformer = TorchTransformerModel(
+        input_size=2 + latent_dim,
+        output_size=1,
+        num_layers=1,
+        history_size=history_size,
+        num_heads=2,
+        hidden_dim=16,
+        device=device,
+    )
+    spring_coeff_head = SpringCoefficientHead(latent_dim=latent_dim, device=device)
+
+    in_mean, in_std = _make_dummy_stats(device, 2)
+    spring_in_mean, spring_in_std = _make_dummy_stats(device, 2)
+
+    model = SpringTransformerForceEstimator(
+        model_transformer=model_transformer,
+        force_transformer=force_transformer,
+        spring_coeff_head=spring_coeff_head,
+        latent_dim=latent_dim,
+        input_mean=in_mean,
+        input_std=in_std,
+        spring_input_mean=spring_in_mean,
+        spring_input_std=spring_in_std,
+        velocity_threshold=0.1,
+        spring_alpha=1.0,
+        spring_stride=2,
+        force_stride=2,
+    )
+
+    input_negative = torch.zeros(1, history_size, 2)
+    input_negative[0, -1, 1] = -1.0  # negative velocity with magnitude above threshold
+
+    _ = model(input_negative)
+    assert torch.allclose(model.spring_buffer[0, -1, :], input_negative[0, -1, :])
 
 
 def test_transformer_default_activation_is_relu():

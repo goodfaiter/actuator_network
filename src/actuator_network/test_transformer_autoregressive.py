@@ -13,17 +13,17 @@ DEFAULT_MODEL_PATH = "/workspace/data/output_data/best_transformer_autoregressiv
 def run_transformer_autoregressive_inference(
     model_path: str,
     mcap_file_paths: list[str],
-    data_freq: int,
 ) -> list[str]:
     """Run closed-loop Transformer inference on the given MCAPs.
 
     The model's own previous predictions are fed back as the autoregressive force
-    input channel, matching the intended deployment behavior.
+    input channel, matching the intended deployment behavior. The preprocessing
+    frequency is read from the model metadata so it always matches the frequency
+    used during training.
 
     Args:
         model_path: Path to the saved TorchScript model.
         mcap_file_paths: List of input MCAP files.
-        data_freq: Frequency in Hz used during preprocessing.
 
     Returns:
         List of output file paths.
@@ -33,8 +33,12 @@ def run_transformer_autoregressive_inference(
     print("Loading autoregressive Transformer model...")
     model = torch.jit.load(model_path, map_location=device)
 
-    stride = int(model.stride.item())
-    num_hist = int(model.history_size.item())
+    data_freq = model.metadata["frequency"]
+    if data_freq <= 1:
+        raise ValueError(f"Checkpoint stores an invalid frequency: {data_freq}")
+
+    stride = model.metadata["stride"]
+    num_hist = model.metadata["history_size"]
     input_cols = model.input_columns
     output_cols = model.output_columns
     ar_col = "tendon_bota_force_newton_data"
@@ -84,15 +88,13 @@ def run_transformer_autoregressive_inference(
 
 
 def main():
-    # Configuration
-    data_freq = 200  # Hz, must match training
     mcap_file_paths = [
         "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-11_58_32_0.mcap",  # finger, mixed 200Hz
         "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_18_38_0.mcap",  # weak spring, mixed 200Hz
         "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_34_43_0.mcap",  # strong spring, mixed 200Hz
     ]
 
-    run_transformer_autoregressive_inference(DEFAULT_MODEL_PATH, mcap_file_paths, data_freq)
+    run_transformer_autoregressive_inference(DEFAULT_MODEL_PATH, mcap_file_paths)
 
 
 if __name__ == "__main__":

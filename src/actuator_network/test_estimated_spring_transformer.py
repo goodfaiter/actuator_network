@@ -46,17 +46,17 @@ def _build_inference_window(
 def run_estimated_spring_transformer_inference(
     model_path: str,
     mcap_file_paths: list[str],
-    data_freq: int,
 ) -> list[str]:
     """Run spring/force transformer inference on the given MCAPs.
 
     Inference is performed one timestep at a time with a sliding history window,
-    matching the intended online deployment pattern.
+    matching the intended online deployment pattern. The preprocessing frequency
+    is read from the model metadata so it always matches the frequency used
+    during training.
 
     Args:
         model_path: Path to the saved TorchScript model.
         mcap_file_paths: List of input MCAP files.
-        data_freq: Frequency in Hz used during preprocessing.
 
     Returns:
         List of output file paths.
@@ -66,10 +66,16 @@ def run_estimated_spring_transformer_inference(
     output_paths = []
     for mcap_file_path in mcap_file_paths:
         print("Loading estimated-spring transformer model...")
+        # Reload per file: the model is stateful (spring buffer) and reset() does
+        # not survive torch.jit.script, so a fresh instance is used per recording.
         model = torch.jit.load(model_path, map_location=device)
 
-        stride = int(model.stride.item())
-        num_hist = int(model.history_size.item())
+        data_freq = model.metadata["frequency"]
+        if data_freq <= 1:
+            raise ValueError(f"Checkpoint stores an invalid frequency: {data_freq}")
+
+        stride = model.metadata["stride"]
+        num_hist = model.metadata["history_size"]
         input_cols = model.input_columns
         output_cols = model.output_columns
         data_df = read_mcap_to_dataframe(mcap_file_path)
@@ -104,14 +110,13 @@ def run_estimated_spring_transformer_inference(
 
 
 def main():
-    data_freq = 200  # Hz, must match training
     mcap_file_paths = [
         "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-11_58_32_0.mcap",  # finger, mixed 200Hz
         "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_18_38_0.mcap",  # weak spring, mixed 200Hz
         "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_34_43_0.mcap",  # strong spring, mixed 200Hz
     ]
 
-    run_estimated_spring_transformer_inference(DEFAULT_MODEL_PATH, mcap_file_paths, data_freq)
+    run_estimated_spring_transformer_inference(DEFAULT_MODEL_PATH, mcap_file_paths)
 
 
 if __name__ == "__main__":

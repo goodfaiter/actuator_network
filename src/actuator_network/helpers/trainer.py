@@ -133,7 +133,6 @@ def train(
         }
     )
     wandb.log({"Model": str(model)})
-    # wandb.watch(model, log="all", log_freq=100)
 
     # Compute a single fixed random validation subset to save time.
     val_inputs_subset, val_outputs_subset = _fixed_random_subset(val_inputs, val_outputs, val_fraction)

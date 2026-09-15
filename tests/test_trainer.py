@@ -59,11 +59,11 @@ def test_train_prefixed_latest_checkpoints():
                 val_inputs,
                 val_outputs,
                 model_saver=saver,
-                latest_prefix="m5_transformer_",
+                latest_prefix="transformer_",
             )
 
-        assert os.path.isfile(os.path.join(tmpdir, "best_m5_transformer_latest.pt"))
-        assert os.path.isfile(os.path.join(tmpdir, "final_m5_transformer_latest.pt"))
+        assert os.path.isfile(os.path.join(tmpdir, "best_transformer_latest.pt"))
+        assert os.path.isfile(os.path.join(tmpdir, "final_transformer_latest.pt"))
 
 
 def test_train_uses_fixed_val_subset():

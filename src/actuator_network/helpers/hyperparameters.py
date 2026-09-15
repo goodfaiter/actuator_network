@@ -249,7 +249,7 @@ class EstimatedSpringTransformerConfig(BaseTrainingConfig):
 
     # Spring transformer parameters
     spring_history_size: int = 500
-    spring_stride: int = 4  # force_stride (4) * spring_stride_multiplier (4)
+    spring_stride: int = 4  # force_stride (2) * spring_stride_multiplier (2)
     spring_num_layers: int = 1
     spring_num_heads: int = 4
     spring_hidden_dim: int = 112  # spring_num_heads (4) * spring_hidden_dim_per_head (28)

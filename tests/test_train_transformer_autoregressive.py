@@ -36,7 +36,6 @@ def test_build_autoregressive_dataset_shifts_force_channel():
         output_cols=["tendon_bota_force_newton_data"],
         history_size=3,
         stride=1,
-        prediction=False,
         device=torch.device("cpu"),
     )
 
@@ -61,7 +60,6 @@ def test_train_transformer_autoregressive_smoke():
         output_cols=["tendon_bota_force_newton_data"],
         history_size=8,
         stride=1,
-        prediction=False,
         device=device,
     )
 
@@ -115,7 +113,7 @@ def test_train_transformer_autoregressive_smoke():
             "forward": lambda self, x: (x - self.input_mean) / self.input_std,
             "freeze": lambda self: None,
             "unfreeze": lambda self: None,
-            "trace_and_save": lambda self, path: None,
+            "script_and_save": lambda self, path: None,
         },
     )()
 

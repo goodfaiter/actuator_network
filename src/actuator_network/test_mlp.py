@@ -13,14 +13,15 @@ DEFAULT_MODEL_PATH = "/workspace/data/output_data/best_mlp_latest.pt"
 def run_mlp_inference(
     model_path: str,
     mcap_file_paths: list[str],
-    data_freq: int,
 ) -> list[str]:
     """Run MLP inference on the given MCAPs and write prediction MCAPs.
+
+    The preprocessing frequency is read from the model metadata so it always
+    matches the frequency used during training.
 
     Args:
         model_path: Path to the saved TorchScript model.
         mcap_file_paths: List of input MCAP files.
-        data_freq: Frequency in Hz used during preprocessing.
 
     Returns:
         List of output file paths.
@@ -30,9 +31,12 @@ def run_mlp_inference(
     print("Loading MLP model...")
     model = torch.jit.load(model_path, map_location=device)
 
-    stride = int(model.stride.item())
-    num_hist = int(model.history_size.item())
-    prediction = bool(model.prediction_mode.item())
+    data_freq = model.metadata["frequency"]
+    if data_freq <= 1:
+        raise ValueError(f"Checkpoint stores an invalid frequency: {data_freq}")
+
+    stride = model.metadata["stride"]
+    num_hist = model.metadata["history_size"]
     input_cols = model.input_columns
     output_cols = model.output_columns
 
@@ -45,9 +49,7 @@ def run_mlp_inference(
         process_dataframe(data_df_extrapolated)
         col_names, data_tensor = pandas_to_torch(data_df_extrapolated, device=device)
         input_indices = [col_names.index(col) for col in input_cols]
-        inputs = process_inputs_time_series(
-            data_tensor[:, input_indices], history_size=num_hist, stride=stride, prediction=prediction
-        )
+        inputs = process_inputs_time_series(data_tensor[:, input_indices], history_size=num_hist, stride=stride)
         # Flatten windows for the MLP
         inputs = inputs.view(inputs.shape[0], -1)
 
@@ -74,13 +76,13 @@ def run_mlp_inference(
 
 
 def main():
-    # Configuration
-    data_freq = 80  # Hz, must match training
     mcap_file_paths = [
-        "/workspace/data/training_data/2026_08_19/rosbag2_2026_08_19-12_40_03_0.mcap",
+        "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-11_58_32_0.mcap",  # finger, mixed 200Hz
+        "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_18_38_0.mcap",  # weak spring, mixed 200Hz
+        "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_34_43_0.mcap",  # strong spring, mixed 200Hz
     ]
 
-    run_mlp_inference(DEFAULT_MODEL_PATH, mcap_file_paths, data_freq)
+    run_mlp_inference(DEFAULT_MODEL_PATH, mcap_file_paths)
 
 
 if __name__ == "__main__":
