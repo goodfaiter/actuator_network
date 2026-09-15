@@ -242,7 +242,7 @@ uv run python plot_rmse.py
 
 1. **Entry points are thin experiment wrappers.** Hyperparameters live in dataclasses in `helpers/hyperparameters.py`; each train/test script only hardcodes its MCAP path list. They work as `uv run <script>` entry points but are not a generic CLI yet.
 
-2. **`process_inputs_time_series` drops incomplete windows.** Sliding windows are built with fancy indexing; sequences that would extend past the end are dropped (no zero-padding). The estimated-spring pipeline instead builds explicitly zero-padded windows (`_build_aligned_windows` / `_build_inference_window`) — an intentional difference.
+2. **`process_inputs_time_series` drops incomplete windows.** Sliding windows are built with fancy indexing; sequences that would extend past the end are dropped (no zero-padding). The estimated-spring pipeline instead builds explicitly zero-padded windows in the normalized domain (`_build_aligned_windows` / `_build_inference_window`, padding = exact zeros) — an intentional difference; the deployable `SpringTransformerModel` zero-initializes its spring buffer to match.
 
 3. **`process_dataframe` needs resampled data.** The derivative timestep `dt` is derived from the DataFrame index spacing, so always call `extrapolate_dataframe` before `process_dataframe`.
 

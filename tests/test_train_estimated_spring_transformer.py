@@ -5,8 +5,7 @@ import torch
 
 from actuator_network.helpers.torch_model import (
     SpringCoefficientHead,
-    SpringForceTrainingModel,
-    SpringTransformerForceEstimator,
+    SpringTransformerModel,
     TorchTransformerModel,
 )
 from actuator_network.helpers.wrapper import ScaledModelWrapper
@@ -14,6 +13,7 @@ from actuator_network.train_estimated_spring_transformer import (
     _build_aligned_windows,
     _build_frozen_spring_windows,
     build_estimated_spring_dataset,
+    compute_estimated_spring_dataset_stats,
 )
 
 
@@ -23,7 +23,7 @@ def test_build_frozen_spring_windows():
     normal_windows[:, :, 1] = torch.tensor([0.0, 0.0, 0.0])  # all below threshold
     normal_windows[2, -1, 1] = 0.5  # one moving window
 
-    frozen = _build_frozen_spring_windows(normal_windows, velocity_idx=1, velocity_threshold=0.1)
+    frozen = _build_frozen_spring_windows(normal_windows, velocity_idx=1, threshold_lo=-0.1, threshold_hi=0.1)
 
     # Before the first moving window, the buffer is zero-initialized.
     assert torch.allclose(frozen[0], torch.zeros_like(normal_windows[0]))
@@ -82,6 +82,8 @@ def test_build_estimated_spring_dataset_includes_all_samples():
         }
     )
 
+    stats = compute_estimated_spring_dataset_stats(dataframes=[df], file_labels=[("dummy.mcap", 0.5)])
+
     spring_windows, force_windows, spring_targets, force_targets = build_estimated_spring_dataset(
         dataframes=[df],
         file_labels=[("dummy.mcap", 0.5)],
@@ -89,8 +91,8 @@ def test_build_estimated_spring_dataset_includes_all_samples():
         history_size=2,
         spring_stride=2,
         force_stride=1,
-        prediction=False,
-        velocity_threshold=0.0,  # every non-zero velocity triggers a spring-buffer update.
+        velocity_bounds=(0.0, 0.0),  # every non-zero velocity triggers a spring-buffer update.
+        stats=stats,
         device=torch.device("cpu"),
     )
 
@@ -99,7 +101,9 @@ def test_build_estimated_spring_dataset_includes_all_samples():
     assert spring_targets.shape[0] == num_samples
     assert force_targets.shape[0] == num_samples
 
-    # First windows are zero-padded before the current timestep.
+    input_mean, input_std, force_output_mean, force_output_std, spring_output_mean, spring_output_std = stats
+
+    # First windows are zero-padded before the current timestep (in normalized space).
     first_features = torch.tensor(
         df.iloc[0][
             [
@@ -110,17 +114,20 @@ def test_build_estimated_spring_dataset_includes_all_samples():
         ].to_numpy(),
         dtype=torch.float32,
     )
-    assert torch.allclose(spring_windows[0, -1], first_features)
+    expected_first = (first_features - input_mean) / input_std
+    assert torch.allclose(spring_windows[0, -1], expected_first)
     assert torch.allclose(spring_windows[0, :-1], torch.zeros_like(spring_windows[0, :-1]))
-    assert torch.allclose(force_windows[0, -1], first_features)
+    assert torch.allclose(force_windows[0, -1], expected_first)
     assert torch.allclose(force_windows[0, :-1], torch.zeros_like(force_windows[0, :-1]))
 
-    # Targets line up with the last (current) timestep of each window.
-    assert torch.allclose(
-        force_targets[-1, 0, 0],
-        torch.tensor(df["tendon_bota_force_newton_data"].iloc[-1], dtype=torch.float32),
-    )
-    assert torch.allclose(spring_targets[:, 0, 0], torch.full((num_samples,), 0.5))
+    # Targets line up with the last (current) timestep of each window (normalized).
+    expected_force_last = (
+        torch.tensor(df["tendon_bota_force_newton_data"].iloc[-1], dtype=torch.float32) - force_output_mean
+    ) / force_output_std
+    assert torch.allclose(force_targets[-1, 0, 0], expected_force_last)
+
+    expected_spring = (0.5 - spring_output_mean.view(-1)[0]) / spring_output_std.view(-1)[0]
+    assert torch.allclose(spring_targets[:, 0, 0], torch.full((num_samples,), float(expected_spring)))
 
 
 def _make_dummy_stats(device: torch.device, dims: int):
@@ -156,7 +163,7 @@ def test_spring_force_training_model_forward():
     )
     spring_coeff_head = SpringCoefficientHead(latent_dim=latent_dim, device=device)
 
-    model = SpringForceTrainingModel(
+    model = SpringTransformerModel(
         model_transformer=model_transformer,
         force_transformer=force_transformer,
         spring_coeff_head=spring_coeff_head,
@@ -203,16 +210,13 @@ def test_spring_transformer_force_estimator_stateful():
     in_mean, in_std = _make_dummy_stats(device, 2)
     spring_in_mean, spring_in_std = _make_dummy_stats(device, 2)
 
-    model = SpringTransformerForceEstimator(
+    model = SpringTransformerModel(
         model_transformer=model_transformer,
         force_transformer=force_transformer,
         spring_coeff_head=spring_coeff_head,
         latent_dim=latent_dim,
-        input_mean=in_mean,
-        input_std=in_std,
-        spring_input_mean=spring_in_mean,
-        spring_input_std=spring_in_std,
-        velocity_threshold=0.1,
+        velocity_threshold_lo=-0.1,
+        velocity_threshold_hi=0.1,
         spring_alpha=1.0,
         spring_stride=spring_stride,
         force_stride=force_stride,
@@ -262,16 +266,13 @@ def test_spring_transformer_force_estimator_scriptable():
     in_mean, in_std = _make_dummy_stats(device, 2)
     spring_in_mean, spring_in_std = _make_dummy_stats(device, 2)
 
-    model = SpringTransformerForceEstimator(
+    model = SpringTransformerModel(
         model_transformer=model_transformer,
         force_transformer=force_transformer,
         spring_coeff_head=spring_coeff_head,
         latent_dim=latent_dim,
-        input_mean=in_mean,
-        input_std=in_std,
-        spring_input_mean=spring_in_mean,
-        spring_input_std=spring_in_std,
-        velocity_threshold=0.1,
+        velocity_threshold_lo=-0.1,
+        velocity_threshold_hi=0.1,
         spring_stride=spring_stride,
         force_stride=force_stride,
     )
@@ -315,16 +316,13 @@ def test_wrapped_spring_transformer_force_estimator_scriptable():
     spring_out_mean, spring_out_std = _make_dummy_stats(device, 1)
     force_out_mean, force_out_std = _make_dummy_stats(device, 1)
 
-    deployable = SpringTransformerForceEstimator(
+    deployable = SpringTransformerModel(
         model_transformer=model_transformer,
         force_transformer=force_transformer,
         spring_coeff_head=spring_coeff_head,
         latent_dim=latent_dim,
-        input_mean=in_mean,
-        input_std=in_std,
-        spring_input_mean=spring_in_mean,
-        spring_input_std=spring_in_std,
-        velocity_threshold=0.1,
+        velocity_threshold_lo=-0.1,
+        velocity_threshold_hi=0.1,
         spring_alpha=1.0,
         spring_stride=spring_stride,
         force_stride=force_stride,
@@ -392,16 +390,13 @@ def test_spring_transformer_force_estimator_smoothing():
 
     # With alpha=0.0 the latent estimate should stay pinned to the initial zero,
     # which makes the spring-coefficient head output constant as well.
-    model = SpringTransformerForceEstimator(
+    model = SpringTransformerModel(
         model_transformer=model_transformer,
         force_transformer=force_transformer,
         spring_coeff_head=spring_coeff_head,
         latent_dim=latent_dim,
-        input_mean=in_mean,
-        input_std=in_std,
-        spring_input_mean=spring_in_mean,
-        spring_input_std=spring_in_std,
-        velocity_threshold=0.1,
+        velocity_threshold_lo=-0.1,
+        velocity_threshold_hi=0.1,
         spring_alpha=0.0,
         spring_stride=spring_stride,
         force_stride=force_stride,
@@ -446,16 +441,13 @@ def test_spring_transformer_force_estimator_stride_rate():
     in_mean, in_std = _make_dummy_stats(device, 2)
     spring_in_mean, spring_in_std = _make_dummy_stats(device, 2)
 
-    model = SpringTransformerForceEstimator(
+    model = SpringTransformerModel(
         model_transformer=model_transformer,
         force_transformer=force_transformer,
         spring_coeff_head=spring_coeff_head,
         latent_dim=latent_dim,
-        input_mean=in_mean,
-        input_std=in_std,
-        spring_input_mean=spring_in_mean,
-        spring_input_std=spring_in_std,
-        velocity_threshold=0.1,
+        velocity_threshold_lo=-0.1,
+        velocity_threshold_hi=0.1,
         spring_alpha=1.0,
         spring_stride=spring_stride,
         force_stride=force_stride,
@@ -511,16 +503,13 @@ def test_spring_transformer_force_estimator_negative_velocity_updates_buffer():
     in_mean, in_std = _make_dummy_stats(device, 2)
     spring_in_mean, spring_in_std = _make_dummy_stats(device, 2)
 
-    model = SpringTransformerForceEstimator(
+    model = SpringTransformerModel(
         model_transformer=model_transformer,
         force_transformer=force_transformer,
         spring_coeff_head=spring_coeff_head,
         latent_dim=latent_dim,
-        input_mean=in_mean,
-        input_std=in_std,
-        spring_input_mean=spring_in_mean,
-        spring_input_std=spring_in_std,
-        velocity_threshold=0.1,
+        velocity_threshold_lo=-0.1,
+        velocity_threshold_hi=0.1,
         spring_alpha=1.0,
         spring_stride=2,
         force_stride=2,

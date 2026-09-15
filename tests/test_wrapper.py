@@ -8,7 +8,7 @@ from actuator_network.helpers.m5_model import M5FrictionModel
 from actuator_network.helpers.torch_model import (
     PlainM5PhysicsModel,
     SpringCoefficientHead,
-    SpringTransformerForceEstimator,
+    SpringTransformerModel,
     TorchMlpModel,
     TorchRNNModel,
     TorchTransformerModel,
@@ -96,16 +96,14 @@ def test_wrapper_scripts_spring_transformer_estimator(tmp_path):
         device=DEVICE,
     )
     spring_coeff_head = SpringCoefficientHead(latent_dim=16, device=DEVICE)
-    estimator = SpringTransformerForceEstimator(
+    estimator = SpringTransformerModel(
         model_transformer=model_transformer,
         force_transformer=force_transformer,
         spring_coeff_head=spring_coeff_head,
         latent_dim=16,
-        input_mean=torch.zeros(1, 2),
-        input_std=torch.ones(1, 2),
-        spring_input_mean=torch.zeros(1, 2),
-        spring_input_std=torch.ones(1, 2),
-        velocity_threshold=0.1,
+        velocity_idx=1,
+        velocity_threshold_lo=-0.1,
+        velocity_threshold_hi=0.1,
         spring_alpha=0.9,
         spring_stride=2,
         force_stride=2,
