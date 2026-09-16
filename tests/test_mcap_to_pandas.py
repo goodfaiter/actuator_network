@@ -16,6 +16,7 @@ EXPECTED_TOPICS = [
 
 EXPECTED_COLUMNS = [
     "measured_position_rad_data",
+    "measured_position_error_rad_data",
     "measured_velocity_rad_per_sec_data",
     "bota_wrench_N_and_Nm_force_x",
     "bota_wrench_N_and_Nm_force_y",

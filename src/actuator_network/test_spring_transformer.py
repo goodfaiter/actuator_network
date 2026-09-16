@@ -111,9 +111,10 @@ def run_spring_transformer_inference(
 
 def main():
     mcap_file_paths = [
-        "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-11_58_32_0.mcap",  # finger, mixed 200Hz
-        "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_18_38_0.mcap",  # weak spring, mixed 200Hz
-        "/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_34_43_0.mcap",  # strong spring, mixed 200Hz
+        "/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-09_16_16_0.mcap", # blocked
+        "/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-10_46_40_0.mcap", # strong spring
+        "/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-11_27_33_0.mcap", # weak spring
+        "/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-12_19_09_0.mcap", # finger
     ]
 
     run_spring_transformer_inference(DEFAULT_MODEL_PATH, mcap_file_paths)

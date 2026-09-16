@@ -493,23 +493,32 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     mcap_files: list[tuple[str, float]] = [
-        # finger, mixed 200Hz
-        ("/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_03_30_0.mcap", 10.770059235),
-        ("/workspace/data/training_data/2026_08_20/rosbag2_2026_08_20-08_52_16_0.mcap", 10.770059235),
-        # weak spring, mixed 200Hz
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_11_49_0.mcap", 1.326609775),
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_15_46_0.mcap", 1.326609775),
-        # strong spring, mixed 200Hz
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_27_46_0.mcap", 3.916449086),
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_31_31_0.mcap", 3.916449086),
+        # blocked
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-09_01_21_0.mcap", 50.0),
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-09_03_39_0.mcap", 50.0),
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-09_05_41_0.mcap", 50.0),
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-09_13_54_0.mcap", 50.0),
+        # strong spring
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-10_38_20_0.mcap", 3.9),
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-10_39_52_0.mcap", 3.9),
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-10_42_57_0.mcap", 3.9),
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-10_44_39_0.mcap", 3.9),
+        # weak spring
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-11_18_11_0.mcap", 1.3),
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-11_20_54_0.mcap", 1.3),
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-11_23_21_0.mcap", 1.3),
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-11_24_47_0.mcap", 1.3),
+        # finger
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-12_11_54_0.mcap", 10.0),
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-12_13_57_0.mcap", 10.0),
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-12_15_28_0.mcap", 10.0),
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-12_17_53_0.mcap", 10.0),
     ]
     val_mcap_files: list[tuple[str, float]] = [
-        # finger, mixed 200Hz
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-11_58_32_0.mcap", 10.770059235),
-        # weak spring, mixed 200Hz
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_18_38_0.mcap", 1.326609775),
-        # strong spring, mixed 200Hz
-        ("/workspace/data/training_data/2026_08_24/rosbag2_2026_08_24-13_34_43_0.mcap", 3.916449086),
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-09_16_16_0.mcap", 50.0), # blocked
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-10_46_40_0.mcap", 3.9), # strong spring
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-11_27_33_0.mcap", 1.3), # weak spring
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-12_19_09_0.mcap", 10.0), # finger
     ]
 
     print("Loading and processing training MCAP files...")
