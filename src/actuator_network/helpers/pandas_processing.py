@@ -42,11 +42,6 @@ def process_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     )
     df["calculated_dynamic_force_newton_data"] = df["calculated_acceleration_meter_per_sec2_data"] * mass
 
-    df["weight_kg_data"] = df["weight_kg_data"]
-    df["load_newton_data"] = df["weight_kg_data"] * g
-
-    df["tendon_force_newton_data"] = df["load_newton_data"] + df["calculated_dynamic_force_newton_data"]
-
     df["tendon_bota_force_newton_data"] = df["bota_wrench_N_and_Nm_torque_z"] / radius
 
     return df
