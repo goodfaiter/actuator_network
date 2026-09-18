@@ -23,7 +23,7 @@ def test_rnn_train_and_predict_smoke():
     train_ratio = 0.8
     num_epochs = 2
     input_cols = ["desired_position_rad_data", "measured_position_rad_data", "measured_velocity_rad_per_sec_data"]
-    output_cols = ["load_newton_data"]
+    output_cols = ["tendon_bota_force_newton_data"]
     device = torch.device("cpu")
 
     data_df = read_mcap_to_dataframe(mcap_path)

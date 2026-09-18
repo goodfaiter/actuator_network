@@ -13,7 +13,7 @@ from actuator_network.helpers.data_pipeline import (
 
 TEST_MCAP = "/workspace/tests/test.mcap"
 INPUT_COLS = ["desired_position_rad_data", "measured_position_rad_data", "measured_velocity_rad_per_sec_data"]
-OUTPUT_COLS = ["load_newton_data"]
+OUTPUT_COLS = ["tendon_bota_force_newton_data"]
 
 
 def test_process_mcap_file_returns_cpu_tensors():

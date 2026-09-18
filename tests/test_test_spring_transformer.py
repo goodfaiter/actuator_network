@@ -1,29 +1,88 @@
 """Tests for the spring transformer inference script."""
 
+import os
+import tempfile
+
+import numpy as np
+import pytest
 import torch
+from mcap_ros2.reader import read_ros2_messages
 
-from actuator_network.test_spring_transformer import _build_inference_window
+from actuator_network.test_spring_transformer import run_spring_transformer_inference
+
+TEST_MCAP = "/workspace/tests/test.mcap"
 
 
-def test_build_inference_window_zero_pads_early_samples():
-    """Early timesteps should receive zero-padded history windows."""
-    features = torch.arange(1, 21, dtype=torch.float32).view(10, 2)
-    num_hist = 3
-    stride = 2
-    device = torch.device("cpu")
+def test_run_spring_transformer_inference_writes_predictions(tmp_path):
+    """Inference at the model's inference rate writes a populated predicted column."""
+    assert os.path.isfile(TEST_MCAP), f"Test MCAP not found: {TEST_MCAP}"
 
-    window = _build_inference_window(features, t=0, num_hist=num_hist, stride=stride, device=device)
-    assert window.shape == (1, num_hist, 2)
-    # The current timestep is at the end; earlier entries are zero-padded.
-    assert torch.allclose(window[0, -1], features[0])
-    assert torch.allclose(window[0, :-1], torch.zeros_like(window[0, :-1]))
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # A tiny scripted spring-model wrapper is built in-memory so the run
+        # function is exercised end to end without a training checkpoint.
+        from actuator_network.helpers.torch_model import (
+            SpringCoefficientHead,
+            SpringTransformerModel,
+            TorchTransformerModel,
+        )
+        from actuator_network.helpers.wrapper import ScaledModelWrapper
 
-    # The last entry of the window at timestep t should always be features[t].
-    for t in range(features.shape[0]):
-        window = _build_inference_window(features, t=t, num_hist=num_hist, stride=stride, device=device)
-        assert torch.allclose(window[0, -1], features[t])
+        device = torch.device("cpu")
+        model_transformer = TorchTransformerModel(
+            input_size=2,
+            output_size=4,
+            num_layers=1,
+            history_size=4,
+            num_heads=2,
+            hidden_dim=8,
+            device=device,
+        )
+        force_transformer = TorchTransformerModel(
+            input_size=2 + 4,
+            output_size=1,
+            num_layers=1,
+            history_size=1,
+            num_heads=2,
+            hidden_dim=8,
+            device=device,
+        )
+        spring_coeff_head = SpringCoefficientHead(latent_dim=4, device=device)
+        estimator = SpringTransformerModel(
+            model_transformer=model_transformer,
+            force_transformer=force_transformer,
+            spring_coeff_head=spring_coeff_head,
+            latent_dim=4,
+        )
+        wrapped = ScaledModelWrapper(
+            estimator,
+            torch.zeros(1, 2),
+            torch.ones(1, 2),
+            torch.zeros(1, 2),
+            torch.ones(1, 2),
+            frequency=200,
+            history_size=1,
+            stride=20,
+            input_columns=["measured_position_rad_data", "measured_velocity_rad_per_sec_data"],
+            output_columns=["tendon_bota_force_newton_data", "spring_coeff"],
+        )
+        wrapped.eval()
+        model_path = os.path.join(tmpdir, "spring.pt")
+        torch.jit.script(wrapped).save(model_path)
 
-    # Once the window is fully inside the data, no zero padding remains.
-    fully_inside_t = (num_hist - 1) * stride
-    window = _build_inference_window(features, t=fully_inside_t, num_hist=num_hist, stride=stride, device=device)
-    assert torch.all(window != 0.0)
+        output_paths = run_spring_transformer_inference(model_path, [TEST_MCAP])
+
+        assert len(output_paths) == 1
+        assert os.path.isfile(output_paths[0])
+        assert output_paths[0].endswith("_spring_transformer_predicted.mcap")
+
+        # The predicted recording holds only the inferred samples; per topic the
+        # timestamps are spaced at the model's inference rate (200 Hz / 20),
+        # expressed in nanoseconds.
+        timestamps = [
+            message.log_time_ns
+            for message in read_ros2_messages(output_paths[0], topics=["/tendon_bota_force_newton_data"])
+        ]
+        assert len(timestamps) > 1
+
+        spacings = np.diff(timestamps)
+        assert np.median(spacings) == pytest.approx(1e9 / (200 / 20), rel=0.05)

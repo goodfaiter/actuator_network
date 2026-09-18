@@ -224,7 +224,7 @@ def test_spring_transformer_force_estimator_stateful():
     model.eval()
 
     # Static input: spring buffer should freeze and produce identical outputs.
-    static_input = torch.zeros(1, history_size, 2)
+    static_input = torch.zeros(1, 1, 2)
     out1 = model(static_input)
     out2 = model(static_input)
     assert out1.shape == (1, 1, 2)
@@ -278,7 +278,7 @@ def test_spring_transformer_force_estimator_scriptable():
     )
 
     scripted = torch.jit.script(model)
-    x = torch.zeros(1, history_size, 2)
+    x = torch.zeros(1, 1, 2)
     out = scripted(x)
     assert out.shape == (1, 1, 2)
 
@@ -346,7 +346,7 @@ def test_wrapped_spring_transformer_force_estimator_scriptable():
     wrapped.eval()
 
     scripted = torch.jit.script(wrapped)
-    x = torch.zeros(1, history_size, 2)
+    x = torch.zeros(1, 1, 2)
     out = scripted(x)
     assert out.shape == (1, 1, 2)
 
@@ -403,7 +403,7 @@ def test_spring_transformer_force_estimator_smoothing():
     )
     model.eval()
 
-    static_input = torch.zeros(1, history_size, 2)
+    static_input = torch.zeros(1, 1, 2)
     out1 = model(static_input)
     out2 = model(static_input)
     assert torch.allclose(model.last_latent, torch.zeros_like(model.last_latent), atol=1e-6)
@@ -455,9 +455,9 @@ def test_spring_transformer_force_estimator_stride_rate():
 
     # Two different moving inputs. Dummy stats are zero mean / unit std, so
     # normalized values equal raw values.
-    input_a = torch.zeros(1, history_size, 2)
+    input_a = torch.zeros(1, 1, 2)
     input_a[0, -1, 1] = 1.0  # velocity above threshold
-    input_b = torch.ones(1, history_size, 2)
+    input_b = torch.ones(1, 1, 2)
     input_b[0, -1, 1] = 1.0  # velocity above threshold
 
     # Call 0 is a spring sample: buffer should update to input_a.
@@ -515,7 +515,7 @@ def test_spring_transformer_force_estimator_negative_velocity_updates_buffer():
         force_stride=2,
     )
 
-    input_negative = torch.zeros(1, history_size, 2)
+    input_negative = torch.zeros(1, 1, 2)
     input_negative[0, -1, 1] = -1.0  # negative velocity with magnitude above threshold
 
     _ = model(input_negative)
@@ -573,3 +573,73 @@ def test_transformer_raises_on_invalid_activation():
         assert "Unsupported activation" in str(e)
     else:
         raise AssertionError("Expected ValueError for invalid activation")
+
+
+def test_spring_transformer_force_estimator_multi_env():
+    device = torch.device("cpu")
+    spring_history_size = 10
+    history_size = 5
+    latent_dim = 16
+
+    model_transformer = TorchTransformerModel(
+        input_size=2,
+        output_size=latent_dim,
+        num_layers=1,
+        history_size=spring_history_size,
+        num_heads=2,
+        hidden_dim=16,
+        device=device,
+    )
+    force_transformer = TorchTransformerModel(
+        input_size=2 + latent_dim,
+        output_size=1,
+        num_layers=1,
+        history_size=history_size,
+        num_heads=2,
+        hidden_dim=16,
+        device=device,
+    )
+    spring_coeff_head = SpringCoefficientHead(latent_dim=latent_dim, device=device)
+
+    model = SpringTransformerModel(
+        model_transformer=model_transformer,
+        force_transformer=force_transformer,
+        spring_coeff_head=spring_coeff_head,
+        latent_dim=latent_dim,
+        velocity_idx=1,
+        velocity_threshold_lo=-0.1,
+        velocity_threshold_hi=0.1,
+        spring_alpha=1.0,
+        spring_stride=2,
+        force_stride=2,
+    )
+    model.eval()
+
+    # Env 0 moves (velocity 1.0), env 1 stands still (velocity 0).
+    moving_input = torch.zeros(2, 1, 2)
+    moving_input[0, 0, 1] = 1.0
+
+    _ = model(moving_input)
+    _ = model(moving_input)
+
+    # Env 0's spring buffer holds the moving sample; env 1's stays zero-frozen.
+    assert torch.allclose(model.spring_buffer[0, -1, :], moving_input[0, 0, :])
+    assert torch.allclose(model.spring_buffer[1], torch.zeros_like(model.spring_buffer[1]))
+
+    # The force buffers advance for both environments.
+    assert torch.allclose(model.force_buffer[0, -1, :], moving_input[0, 0, :])
+    assert torch.allclose(model.force_buffer[1, -1, :], moving_input[1, 0, :])
+    assert int(model.spring_update_counter[0].item()) == 2
+    assert int(model.spring_update_counter[1].item()) == 2
+
+    # Once env 1 also moves, its spring buffer updates.
+    _ = model(moving_input)
+    assert torch.allclose(model.spring_buffer[1, -1, :], moving_input[1, 0, :])
+
+    # Selectively reset environment 0 only; env 1 keeps its state.
+    model.reset(torch.tensor([True, False]))
+    assert torch.allclose(model.spring_buffer[0], torch.zeros_like(model.spring_buffer[0]))
+    assert torch.allclose(model.force_buffer[0], torch.zeros_like(model.force_buffer[0]))
+    assert int(model.spring_update_counter[0].item()) == 0
+    assert torch.allclose(model.spring_buffer[1, -1, :], moving_input[1, 0, :])
+    assert int(model.spring_update_counter[1].item()) == 3

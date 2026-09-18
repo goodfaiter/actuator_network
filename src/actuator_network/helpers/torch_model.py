@@ -281,31 +281,36 @@ class SpringTransformerModel(torch.nn.Module):
 
     The class serves both regimes with one dispatched forward:
     batched teacher-forced training (``forward(spring_windows, force_windows)``)
-    and stateful online inference (``forward(x)`` with batch size 1). The
-    underlying transformers are shared, so training through the batched path
-    updates the weights used by the online path.
+    and stateful online inference (``forward(x)`` with ``num_envs`` parallel
+    environments). The underlying transformers are shared, so training through
+    the batched path updates the weights used by the online path.
 
-    The online path receives a sliding window of ``[delta_position, velocity]``
-    sampled at ``force_stride``, already normalized by ``ScaledModelWrapper``. It
-    maintains its own internal spring input buffer (updated with normalized
-    values) sampled at ``spring_stride``. When the last-step velocity exceeds the
-    prescaled threshold bounds (``velocity_threshold_hi``/``velocity_threshold_lo``,
-    derived at construction time from the physical threshold and the training
-    statistics) and the current call coincides with a spring sample instant, the
-    buffer is shifted and the current sample appended; otherwise the buffer is
-    held frozen. The model transformer is run on this buffer to produce a latent
-    representation, which is repeated across the history dimension and
-    concatenated to the incoming ``[delta_position, velocity]`` window before the
-    force transformer predicts ``tendon_bota_force_newton_data``. A small
-    ``SpringCoefficientHead`` reconstructs the spring coefficient from the latent
-    vector for the auxiliary output channel.
+    The online path receives the normalized current sample(s) of shape
+    ``[num_envs, 1, Feature]`` (``[delta_position, velocity, ...]``), already
+    normalized by ``ScaledModelWrapper``. It maintains per-environment internal
+    force and spring input buffers (both zero-initialized to match the
+    zero-padded training windows built in the normalized domain). One call is
+    one force tick: the force buffer appends the current sample, and the spring
+    buffer is shifted and appended only when the environment is moving
+    (``|velocity|`` outside the prescaled threshold bounds ``velocity_threshold_hi``/
+    ``velocity_threshold_lo``, derived at construction time from the physical
+    threshold and the training statistics) and the current call coincides with a
+    spring sample instant; otherwise the spring buffer is held frozen. The model
+    transformer runs on the spring buffer to produce a latent representation,
+    which is EMA-smoothed, repeated across the force window, and concatenated to
+    the internal force buffer before the force transformer predicts
+    ``tendon_bota_force_newton_data``. A small ``SpringCoefficientHead``
+    reconstructs the spring coefficient from the latent vector for the auxiliary
+    output channel. ``reset(reset_idx)`` clears the per-environment states.
 
-    The spring buffer is initialized and reset to zeros, matching the zero-padded
-    training windows built in the normalized domain. The wrapper handles input
-    normalization and output denormalization.
+    The wrapper handles input normalization and output denormalization.
 
-    Important: this model is designed for online inference with **batch size 1**.
-    ``spring_stride`` must be a multiple of ``force_stride`` and at least as large.
+    Important: this model is designed for online inference with arbitrary batch
+    size ``num_envs``. Each call is one force tick: the internal force buffer
+    appends the current sample, and the spring counter ticks (a spring buffer
+    update happens every ``spring_stride // force_stride`` calls when the
+    environment is moving). ``spring_stride`` must be a multiple of
+    ``force_stride`` and at least as large.
 
     The forward pass returns a 2-channel output:
         0: ``tendon_bota_force_newton_data`` (normalized with force output stats)
@@ -346,23 +351,56 @@ class SpringTransformerModel(torch.nn.Module):
         self.register_buffer("spring_alpha", torch.tensor(spring_alpha, dtype=torch.float32))
         self.register_buffer("spring_stride", torch.tensor(spring_stride, dtype=torch.int64))
         self.register_buffer("force_stride", torch.tensor(force_stride, dtype=torch.int64))
-        self.register_buffer("spring_update_counter", torch.zeros(1, dtype=torch.int64))
         self.velocity_idx = velocity_idx
         self.spring_history_size = spring_history_size
         self.force_history_size = force_history_size
         self.hidden_dim = hidden_dim
 
-        # Stateful buffers for online inference. The spring buffer stores
-        # normalized values and is zero-initialized to match the zero-padded
-        # training windows built in the normalized domain.
-        self.register_buffer("spring_buffer", torch.zeros(1, spring_history_size, model_transformer.input_size))
+        # Stateful buffers for online inference, one state per environment.
+        # The buffers are registered with a single environment and the compiled
+        # model reassigns them to the incoming batch size, so the scripted
+        # model works with any num_envs. They store normalized values and are
+        # zero-initialized to match the zero-padded training windows built in
+        # the normalized domain.
+        input_size = model_transformer.input_size
+        self.register_buffer("spring_buffer", torch.zeros(1, spring_history_size, input_size))
+        self.register_buffer("force_buffer", torch.zeros(1, force_history_size, input_size))
         self.register_buffer("last_latent", torch.zeros(1, 1, latent_dim))
+        self.register_buffer("spring_update_counter", torch.zeros(1, dtype=torch.int64))
 
-    def reset(self) -> None:
-        """Clear the internal spring buffer and last latent estimate."""
-        self.spring_buffer.zero_()
-        self.last_latent.zero_()
-        self.spring_update_counter.zero_()
+    def _ensure_state(self, num_envs: int, device: torch.device) -> None:
+        """Re-initialize the per-env state to zeros when the input batch size changes.
+
+        Changing the batch size resets all environment states (fresh session
+        semantics); the zero initialization matches the zero-padded training
+        windows built in the normalized domain.
+        """
+        input_size = self.model_transformer.input_size
+        if self.spring_buffer.size(0) != num_envs:
+            self.spring_buffer = torch.zeros(num_envs, self.spring_history_size, input_size, device=device)
+            self.force_buffer = torch.zeros(num_envs, self.force_history_size, input_size, device=device)
+            self.last_latent = torch.zeros(num_envs, 1, self.latent_dim, device=device)
+            self.spring_update_counter = torch.zeros(num_envs, dtype=torch.int64, device=device)
+
+    def reset(self, reset_idx: torch.Tensor | None = None) -> None:
+        """Clear the internal buffers and counters.
+
+        Args:
+            reset_idx: Optional bool tensor of length ``num_envs`` selecting the
+                environments to reset. When None, all environments are reset
+                (mirroring ``TimeSeriesBuffer.reset_idx``).
+        """
+        if reset_idx is None:
+            self.spring_buffer.zero_()
+            self.force_buffer.zero_()
+            self.last_latent.zero_()
+            self.spring_update_counter.zero_()
+            return
+        mask = reset_idx.reshape(-1)
+        self.spring_buffer[mask] = 0.0
+        self.force_buffer[mask] = 0.0
+        self.last_latent[mask] = 0.0
+        self.spring_update_counter[mask] = 0
 
     def _is_moving(self, velocity: torch.Tensor) -> torch.Tensor:
         return (velocity > self.velocity_threshold_hi) | (velocity < self.velocity_threshold_lo)
@@ -370,9 +408,9 @@ class SpringTransformerModel(torch.nn.Module):
     def forward(self, x: torch.Tensor, force_windows: torch.Tensor | None = None) -> torch.Tensor:
         """Run the model: stateful online inference, or batched teacher-forced training.
 
-        With a single tensor, ``x`` is one normalized force window of shape
-        ``[1, History, Feature]`` and the stateful online path is used (batch
-        size 1; the internal spring buffer is updated as configured). With two
+        With a single tensor, ``x`` is the normalized current sample(s) of shape
+        ``[num_envs, 1, Feature]`` and the stateful online path is used (one
+        internal force history buffer + spring state per environment). With two
         tensors, ``x`` is a batch of normalized spring windows of shape
         ``[Batch, Spring History, Feature]`` and ``force_windows`` the matching
         batch of force windows of shape ``[Batch, Force History, Feature]``; the
@@ -383,37 +421,42 @@ class SpringTransformerModel(torch.nn.Module):
         return self._forward_batched(x, force_windows)
 
     def _forward_stateful(self, x: torch.Tensor) -> torch.Tensor:
-        # x shape: [1, History, Feature] (already normalized by ScaledModelWrapper)
-        last_velocity = x[0, -1, self.velocity_idx]
+        # x shape: [num_envs, 1, Feature] (already normalized by ScaledModelWrapper)
+        self._ensure_state(x.shape[0], x.device)
+        last_velocity = x[:, -1, self.velocity_idx]
 
         spring_update_ratio = int(self.spring_stride.item() // self.force_stride.item())
-        is_spring_sample = int(self.spring_update_counter.item()) % spring_update_ratio == 0
+        is_spring_sample = (self.spring_update_counter % spring_update_ratio) == 0
+        spring_mask = is_spring_sample & self._is_moving(last_velocity)
 
-        if is_spring_sample and self._is_moving(last_velocity):
-            # Shift the spring buffer and append the current normalized sample.
-            self.spring_buffer[0, :-1, :] = self.spring_buffer[0, 1:, :].clone()
-            self.spring_buffer[0, -1, :] = x[0, -1, :]
-        # else: keep the previous spring buffer frozen.
+        if bool(spring_mask.any()):
+            # Shift the selected spring buffers and append the current normalized sample.
+            spring_shifted = torch.cat([self.spring_buffer[spring_mask][:, 1:, :], x[spring_mask][:, -1:, :]], dim=1)
+            self.spring_buffer[spring_mask] = spring_shifted
+
+        # One call is one force tick: shift the force buffers for all environments.
+        force_shifted = torch.cat([self.force_buffer[:, 1:, :], x[:, -1:, :]], dim=1)
+        self.force_buffer.copy_(force_shifted)
 
         self.spring_update_counter.add_(1)
 
-        # Run model transformer on the normalized spring buffer to obtain a latent vector.
-        latent_norm = self.model_transformer(self.spring_buffer)  # [1, 1, latent_dim]
+        # Run model transformer on the normalized spring buffers to obtain latent vectors.
+        latent_norm = self.model_transformer(self.spring_buffer)  # [num_envs, 1, latent_dim]
 
-        # Smooth the latent estimate with exponential moving average to discourage
+        # Smooth the latent estimates with exponential moving average to discourage
         # rapid switching between spring predictions.
         smoothed_latent = self.spring_alpha * latent_norm + (1.0 - self.spring_alpha) * self.last_latent
         self.last_latent.copy_(smoothed_latent)
 
-        # Build force transformer input: [delta_position, velocity, latent].
+        # Build force transformer input: [position, velocity, latent].
         # The incoming force window may be shorter than the spring buffer, so
-        # expand the latent estimate to match the force transformer's input length.
-        latent_channel = smoothed_latent.expand(1, x.size(1), -1)
-        force_input_norm = torch.cat([x, latent_channel], dim=-1)  # [1, History, 2 + latent_dim]
-        force_pred_norm = self.force_transformer(force_input_norm)  # [1, 1, 1]
+        # expand the latent estimates to match the force transformer's input length.
+        latent_channel = smoothed_latent.expand(-1, self.force_buffer.size(1), -1)
+        force_input_norm = torch.cat([self.force_buffer, latent_channel], dim=-1)
+        force_pred_norm = self.force_transformer(force_input_norm)  # [num_envs, 1, 1]
 
-        # Reconstruct spring coefficient from the latent vector.
-        spring_pred_norm = self.spring_coeff_head(smoothed_latent)  # [1, 1, 1]
+        # Reconstruct spring coefficients from the latent vectors.
+        spring_pred_norm = self.spring_coeff_head(smoothed_latent)  # [num_envs, 1, 1]
 
         # Stack force and spring predictions so the wrapper can denormalize each
         # channel with its own output statistics.
