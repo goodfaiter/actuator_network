@@ -128,3 +128,90 @@ def test_wrapper_scripts_spring_transformer_estimator(tmp_path):
     assert loaded.metadata["history_size"] == 4
     out = loaded(torch.randn(1, 4, 2))
     assert out.shape == (1, 1, 2)
+
+
+def test_wrapper_scripted_spring_dynamic_num_envs(tmp_path):
+    """The saved and loaded scripted spring wrapper handles any batch size of envs.
+
+    The wrapper is scripted once (state starts with one environment); each
+    loaded forward call resizes the per-env state to the incoming batch, so the
+    same checkpoint works dynamically with any num_envs.
+    """
+    torch.manual_seed(0)
+    model_transformer = TorchTransformerModel(
+        input_size=2,
+        output_size=16,
+        num_layers=1,
+        history_size=8,
+        num_heads=2,
+        hidden_dim=8,
+        device=DEVICE,
+    )
+    force_transformer = TorchTransformerModel(
+        input_size=2 + 16,
+        output_size=1,
+        num_layers=1,
+        history_size=1,
+        num_heads=2,
+        hidden_dim=8,
+        device=DEVICE,
+    )
+    spring_coeff_head = SpringCoefficientHead(latent_dim=16, device=DEVICE)
+    estimator = SpringTransformerModel(
+        model_transformer=model_transformer,
+        force_transformer=force_transformer,
+        spring_coeff_head=spring_coeff_head,
+        latent_dim=16,
+        velocity_idx=1,
+        velocity_threshold_lo=-0.1,
+        velocity_threshold_hi=0.1,
+        spring_alpha=1.0,
+        spring_stride=2,
+        force_stride=2,
+    )
+    input_mean, input_std = torch.zeros(1, 2), torch.ones(1, 2)
+    output_mean, output_std = torch.zeros(1, 2), torch.ones(1, 2)
+    wrapped = ScaledModelWrapper(
+        estimator,
+        input_mean,
+        input_std,
+        output_mean,
+        output_std,
+        frequency=200,
+        history_size=1,
+        stride=1,
+    )
+    wrapped._tmpdir = tmp_path
+
+    loaded = _script_save_load(wrapped, "spring_dynamic.pt")
+
+    # All envs move (velocity 1.0 above the threshold), so both internal
+    # buffers hold the latest sample of each environment.
+    for num_envs in [1, 2, 3, 4]:
+        x = torch.ones(num_envs, 1, 2)
+        out = loaded(x)
+        assert out.shape == (num_envs, 1, 2)
+        assert loaded.model.spring_buffer.shape[0] == num_envs
+        assert loaded.model.force_buffer.shape[0] == num_envs
+        assert loaded.model.spring_update_counter.shape[0] == num_envs
+        assert torch.allclose(loaded.model.spring_buffer[:, -1, :], x[:, 0, :])
+        assert torch.allclose(loaded.model.force_buffer[:, -1, :], x[:, 0, :])
+
+    # A batch change re-initializes the per-env state to zeros.
+    loaded(torch.ones(3, 1, 2))
+    loaded(torch.ones(2, 1, 2))
+    assert loaded.model.spring_buffer.shape[0] == 2
+    assert torch.allclose(loaded.model.spring_buffer[:, -1, :], torch.ones(2, 2))
+    assert int(loaded.model.spring_update_counter[0].item()) == 1
+
+    # Selective reset through the loaded script: env 0 cleared, env 1 keeps state.
+    loaded.model.reset(torch.tensor([True, False]))
+    assert torch.allclose(loaded.model.spring_buffer[0], torch.zeros(8, 2))
+    assert torch.allclose(loaded.model.force_buffer[0], torch.zeros(1, 2))
+    assert int(loaded.model.spring_update_counter[0].item()) == 0
+    assert torch.allclose(loaded.model.spring_buffer[1, -1, :], torch.ones(2))
+    assert int(loaded.model.spring_update_counter[1].item()) == 1
+
+    # After the selective reset the model keeps running with the same batch.
+    out = loaded(torch.ones(2, 1, 2))
+    assert out.shape == (2, 1, 2)

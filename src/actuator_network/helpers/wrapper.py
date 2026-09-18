@@ -47,11 +47,12 @@ class ScaledModelWrapper(nn.Module):
         self.input_columns = input_columns
         self.output_columns = output_columns
 
+    @torch.jit.export
     def reset(self):
-        """Reset any internal state of the model (if applicable)"""
+        """Reset any internal state of the model (if applicable)."""
         if hasattr(self, "h0"):
             self.h0[:] = 0.0
-        if hasattr(self.model, "reset") and callable(self.model.reset):
+        if hasattr(self.model, "reset"):
             self.model.reset()
 
     def forward(self, x: Tensor) -> Tensor:

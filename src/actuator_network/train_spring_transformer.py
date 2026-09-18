@@ -338,7 +338,6 @@ def train_spring_transformer(
         device: Torch device.
         latest_prefix: Prefix for the latest checkpoint file name.
     """
-    inference_freq = config.data_freq // config.force_stride
     output_cols = [OUTPUT_COL, SPRING_COL]
 
     print("Computing training dataset statistics...")
@@ -445,7 +444,7 @@ def train_spring_transformer(
         input_std,
         combined_output_mean,
         combined_output_std,
-        frequency=inference_freq,
+        frequency=config.data_freq,
         history_size=config.force_history_size,
         stride=config.force_stride,
         input_columns=INPUT_COLS,
@@ -515,10 +514,10 @@ def main():
         ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-12_17_53_0.mcap", 10.0),
     ]
     val_mcap_files: list[tuple[str, float]] = [
-        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-09_16_16_0.mcap", 50.0), # blocked
-        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-10_46_40_0.mcap", 3.9), # strong spring
-        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-11_27_33_0.mcap", 1.3), # weak spring
-        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-12_19_09_0.mcap", 10.0), # finger
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-09_16_16_0.mcap", 50.0),  # blocked
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-10_46_40_0.mcap", 3.9),  # strong spring
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-11_27_33_0.mcap", 1.3),  # weak spring
+        ("/workspace/data/training_data/2026_09_16/rosbag2_2026_09_16-12_19_09_0.mcap", 10.0),  # finger
     ]
 
     print("Loading and processing training MCAP files...")

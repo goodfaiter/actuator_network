@@ -28,7 +28,6 @@ def process_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     so that the timestep ``dt`` used for the derivative can be derived from the index spacing.
     """
     mass = 0.03  # kg
-    g = 9.81  # m/s^2
     radius = 0.011  # m
     dt = (df.index[1] - df.index[0]).total_seconds() if len(df.index) > 1 else 1.0
 

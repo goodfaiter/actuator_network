@@ -206,7 +206,7 @@ uv run test-transformer-autoregressive
 uv run test-spring-transformer
 ```
 
-Each `test-*.py` script loads the matching `best_<model>_latest.pt` TorchScript model (e.g., `best_transformer_latest.pt`), reads its stored metadata — `input_columns`/`output_columns` and the `metadata` dict (`frequency`, `history_size`, `stride`) so preprocessing always matches training —, builds the matching input tensor, runs the model, and writes a `<input>_<model>_predicted.mcap` with the new `*_predicted` columns.
+Each `test-*.py` script loads the matching `best_<model>_latest.pt` TorchScript model (e.g., `best_transformer_latest.pt`), reads its stored metadata — `input_columns`/`output_columns` and the `metadata` dict (`frequency`, `history_size`, `stride`) — and writes a `<input>_<model>_predicted.mcap` with the new `*_predicted` columns. The stored `frequency` is the data (preprocessing) rate the models were trained on; a model's output rate is `frequency / stride` for the tick-based spring pipeline and = `frequency` for all per-sample models. The predicted `.mcap` holds only the samples a model was called at, so for data_freq 200 / stride 2 the predicted `.mcap` is saved at 100 Hz.
 
 | Model | Checkpoint loaded | MCAP suffix |
 |---|---|---|
@@ -242,15 +242,19 @@ uv run python plot_rmse.py
 
 1. **Entry points are thin experiment wrappers.** Hyperparameters live in dataclasses in `helpers/hyperparameters.py`; each train/test script only hardcodes its MCAP path list. They work as `uv run <script>` entry points but are not a generic CLI yet.
 
-2. **`process_inputs_time_series` drops incomplete windows.** Sliding windows are built with fancy indexing; sequences that would extend past the end are dropped (no zero-padding). The spring transformer pipeline instead builds explicitly zero-padded windows in the normalized domain (`_build_aligned_windows` / `_build_inference_window`, padding = exact zeros) — an intentional difference; the deployable `SpringTransformerModel` zero-initializes its spring buffer to match.
+2. **`process_inputs_time_series` drops incomplete windows.** Sliding windows are built with fancy indexing; sequences that would extend past the end are dropped (no zero-padding). The spring transformer pipeline instead builds explicitly zero-padded windows in the normalized domain (`_build_aligned_windows`, padding = exact zeros) — an intentional difference; the deployable `SpringTransformerModel` zero-initializes its internal force/spring buffers to match.
 
-3. **`process_dataframe` needs resampled data.** The derivative timestep `dt` is derived from the DataFrame index spacing, so always call `extrapolate_dataframe` before `process_dataframe`.
+3. **`SpringTransformerModel` multi-env stateful online path.** `forward(x)` expects `x` of shape `[num_envs, 1, F]` (the latest normalized sample only); the model keeps per-environment internal force and spring buffers plus a spring update counter. One call is one force tick (clients call at the inference rate, every `stride`-th sample); the spring buffer updates only when the environment moves and a spring sample instant occurs. The state is **dynamic**: `_ensure_state` re-initializes it to zeros whenever the incoming batch size differs (a batch change resets all env states), so a single saved checkpoint works with any `num_envs`. Old scripted checkpoints keep fixed 1-env state; dynamic behavior requires a re-export. `reset(reset_idx: Tensor | None = None)` clears selected environments (mirroring `TimeSeriesBuffer.reset_idx`); it is exported to TorchScript via `@torch.jit.export` on `ScaledModelWrapper.reset`, and the loaded script exposes the inner state as `loaded.model.spring_buffer` / `loaded.model.reset(mask)`.
 
-4. **RNN hidden state.** `ScaledModelWrapper` registers `h0` only when the wrapped model has an `rnn` attribute. For deployment, call `model.reset()` to clear state between sequences.
+4. **`test_spring_transformer.py` calls at the inference rate.** One model call is one force tick, so predictions are written only at every `stride`-th preprocessed sample (others stay zero); the model is loaded once and reset per recording.
 
-5. **Plot scripts are hardcoded to specific experimental files.** They will fail on a fresh checkout without the matching `data/` contents. They are intended for reproducing paper figures, not as a generic plotting CLI.
+5. **`process_dataframe` needs resampled data.** The derivative timestep `dt` is derived from the DataFrame index spacing, so always call `extrapolate_dataframe` before `process_dataframe`.
 
-6. **Tests exist under `tests/`.** The ROS2 environment installs pytest plugins that conflict with plain `uv run pytest`, so disable plugin autoloading when running tests:
+6. **RNN hidden state.** `ScaledModelWrapper` registers `h0` only when the wrapped model has an `rnn` attribute. For deployment, call `model.reset()` to clear state between sequences.
+
+7. **Plot scripts are hardcoded to specific experimental files.** They will fail on a fresh checkout without the matching `data/` contents. They are intended for reproducing paper figures, not as a generic plotting CLI.
+
+8. **Tests exist under `tests/`.** The ROS2 environment installs pytest plugins that conflict with plain `uv run pytest`, so disable plugin autoloading when running tests:
    ```bash
    PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest tests/
    ```

@@ -32,7 +32,6 @@ def train_mlp(
         val_outputs: Validation target values.
         device: Torch device.
     """
-    inference_freq = config.data_freq // config.stride
 
     # Flatten windows for the MLP.
     train_inputs = train_inputs.view(train_inputs.shape[0], -1)
@@ -57,7 +56,7 @@ def train_mlp(
         inputs_std,
         outputs_mean,
         outputs_std,
-        frequency=inference_freq,
+        frequency=config.data_freq,
         history_size=config.num_hist,
         stride=config.stride,
         input_columns=config.input_cols,
