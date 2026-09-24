@@ -37,12 +37,14 @@ The trained model is wrapped in `ScaledModelWrapper`, which includes input/outpu
 │   ├── train_m5_transformer.py         # Entry point: train M5 + Transformer jointly (JSON-only output, no TorchScript export)
 │   ├── train_transformer_autoregressive.py  # Entry point: train autoregressive Transformer
 │   ├── train_spring_transformer.py  # Entry point: train spring + force transformer pair (W&B sweep target)
+│   ├── export_frozen_latent.py        # Entry point: frozen-latent + pruned model export
 │   ├── test_mlp.py                     # Entry point: run MLP inference on test MCAPs
 │   ├── test_rnn.py                     # Entry point: run RNN inference on test MCAPs
 │   ├── test_transformer.py             # Entry point: run Transformer inference on test MCAPs
 │   ├── test_m5.py                      # Entry point: run M5 inference on test MCAPs
 │   ├── test_transformer_autoregressive.py   # Entry point: run autoregressive Transformer inference
 │   ├── test_spring_transformer.py # Entry point: run spring + force transformer inference
+│   ├── test_spring_transformer_frozen.py  # Entry point: run frozen-latent deployment inference
 │   ├── helpers/
 │   │   ├── mcap_to_pandas.py           # Read ROS2 MCAP → pandas DataFrame
 │   │   ├── pandas_processing.py        # Resample (extrapolate_dataframe), derive load/force; dt derived from index
@@ -104,6 +106,8 @@ uv run test-transformer
 - `test-m5`
 - `test-transformer-autoregressive`
 - `test-spring-transformer`
+- `test-spring-transformer-frozen`
+- `export-frozen-latent`
 
 Run them with `uv run <script>`.
 
@@ -216,6 +220,9 @@ Each `test-*.py` script loads the matching `best_<model>_latest.pt` TorchScript 
 | Transformer (autoregressive) | `best_transformer_autoregressive_latest.pt` | `_transformer_autoregressive_predicted.mcap` |
 | M5 | `m5_friction_params.json` | `_m5_predicted.mcap` |
 | Spring Transformer | `best_spring_transformer_latest.pt` | `_spring_transformer_predicted.mcap` |
+| Spring Transformer (frozen deployment) | `spring_transformer_frozen_<label>.pt` | `_spring_transformer_frozen_predicted.mcap` |
+
+Frozen-latent deployment (see gotchas 4b/4c): export with `uv run export-frozen-latent`, then run the dedicated entry point `uv run test-spring-transformer-frozen` with the pruned `data/output_data/spring_transformer_frozen_<label>.pt` as `model_path` (outputs use the `_spring_transformer_frozen_predicted` suffix); the frozen latent is embedded in the checkpoint, no latent payload is needed. The shared `run_spring_transformer_inference` also still accepts a pruned checkpoint.
 
 ### 4. Generate plots
 
@@ -242,11 +249,15 @@ uv run python plot_rmse.py
 
 1. **Entry points are thin experiment wrappers.** Hyperparameters live in dataclasses in `helpers/hyperparameters.py`; each train/test script only hardcodes its MCAP path list. They work as `uv run <script>` entry points but are not a generic CLI yet.
 
-2. **`process_inputs_time_series` drops incomplete windows.** Sliding windows are built with fancy indexing; sequences that would extend past the end are dropped (no zero-padding). The spring transformer pipeline instead builds explicitly zero-padded windows in the normalized domain (`_build_aligned_windows`, padding = exact zeros) — an intentional difference; the deployable `SpringTransformerModel` zero-initializes its internal force/spring buffers to match.
+2. **`process_inputs_time_series` drops incomplete windows.** Sliding windows are built with fancy indexing; sequences that would extend past the end are dropped (no zero-padding). The spring transformer pipeline instead builds explicitly zero-padded windows in the normalized domain (`helpers/pandas_to_torch.build_aligned_windows`, padding = exact zeros) — an intentional difference; the deployable `SpringTransformerModel` zero-initializes its internal force/spring buffers to match.
 
 3. **`SpringTransformerModel` multi-env stateful online path.** `forward(x)` expects `x` of shape `[num_envs, 1, F]` (the latest normalized sample only); the model keeps per-environment internal force and spring buffers plus a spring update counter. One call is one force tick (clients call at the inference rate, every `stride`-th sample); the spring buffer updates only when the environment moves and a spring sample instant occurs. The state is **dynamic**: `_ensure_state` re-initializes it to zeros whenever the incoming batch size differs (a batch change resets all env states), so a single saved checkpoint works with any `num_envs`. Old scripted checkpoints keep fixed 1-env state; dynamic behavior requires a re-export. `reset(reset_idx: Tensor | None = None)` clears selected environments (mirroring `TimeSeriesBuffer.reset_idx`); it is exported to TorchScript via `@torch.jit.export` on `ScaledModelWrapper.reset`, and the loaded script exposes the inner state as `loaded.model.spring_buffer` / `loaded.model.reset(mask)`.
 
 4. **`test_spring_transformer.py` calls at the inference rate.** One model call is one force tick, so predictions are written only at every `stride`-th preprocessed sample (others stay zero); the model is loaded once and reset per recording.
+
+4b. **Frozen-latent deployment (spring signature pinned to one dataset).** `uv run export-frozen-latent` (entry point `export_frozen_deployment` in `export_frozen_latent.py`) computes, per dataset label, the mean latent over the dataset's frozen spring windows — built exactly as during training via `helpers/pandas_to_torch.build_strided_windows` + `build_frozen_spring_windows` (moved from `train_spring_transformer.py`), with all config read from the checkpoint itself — and writes `data/output_data/frozen_latent_<label>.pt` (`{"latent", "input_columns", "num_windows", "checkpoint"}`), an exported record of the computed latent (the same value is embedded in the pruned checkpoint of 4c).
+
+4c. **Pruned deployment-only model (`FrozenLatentForceModel`).** The same export additionally builds, per label, a pruned scripted model `data/output_data/spring_transformer_frozen_<label>.pt`: a `ScaledModelWrapper` around `FrozenLatentForceModel` (defined in `helpers/torch_model.py`) that keeps strictly the deployment components — the checkpoint's compiled `force_transformer` and `spring_coeff_head`, a dynamic-batch `force_buffer`, and the embedded `frozen_latent` (equal to the exported payload's latent). `model_transformer`, `spring_buffer`, EMA/anchor/counter state, stride and velocity-threshold buffers are dropped, so deployment loads less memory. One call is one force tick with the embedded latent (only the force buffer advances). It runs with the dedicated entry point `test-spring-transformer-frozen` (`test_spring_transformer_frozen.py`); it requires a pruned checkpoint with a non-zero embedded latent, refuses the full adaptive checkpoint, and outputs use the `_spring_transformer_frozen_predicted` suffix; no latent payload is needed (the loop and metadata are unchanged — the shared `run_spring_transformer_inference` also still accepts a pruned checkpoint). `set_frozen_latent` survives `reset()`/batch changes; the export rejects an already-pruned checkpoint. Outputs are verified against a manual reference of the same semantics; tests: `tests/test_spring_transformer_frozen.py`, `tests/test_test_spring_transformer_frozen.py`.
 
 5. **`process_dataframe` needs resampled data.** The derivative timestep `dt` is derived from the DataFrame index spacing, so always call `extrapolate_dataframe` before `process_dataframe`.
 
@@ -283,6 +294,10 @@ uv run test-transformer
 uv run test-m5
 uv run test-transformer-autoregressive
 uv run test-spring-transformer
+uv run test-spring-transformer-frozen
+
+# Frozen-latent export (fixed-spring deployment mode)
+uv run export-frozen-latent
 
 # Plots
 cd src/actuator_network/plots

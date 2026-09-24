@@ -97,3 +97,97 @@ def pandas_to_torch(df, device="cpu"):
     tensor = torch.tensor(np_array, dtype=torch.float32, device=device)
 
     return col_indices, tensor
+
+
+def build_strided_windows(data: torch.Tensor, history_size: int, stride: int) -> torch.Tensor:
+    """Build zero-padded sliding windows sampled backward at the given stride.
+
+    Each window ends at its own raw index and samples backward with the given
+    stride between history samples. Early timesteps for which the history
+    would extend before the start of the data are included and padded with
+    zeros at the beginning of the window, so one window is produced per sample.
+
+    Args:
+        data: Input tensor of shape ``(batch_size, feature_dim)``.
+        history_size: Length of each input window.
+        stride: Stride between history samples inside a window.
+
+    Returns:
+        Tensor of shape ``(batch_size, history_size, feature_dim)``.
+    """
+    batch_size, feature_dim = data.shape
+    if batch_size == 0:
+        return torch.empty((0, history_size, feature_dim), device=data.device)
+
+    end_indices = torch.arange(batch_size, device=data.device)
+    offsets = torch.arange(history_size, device=data.device) * stride - (history_size - 1) * stride
+    indices = end_indices.unsqueeze(1) + offsets.unsqueeze(0)
+    indices_clamped = indices.clamp_min(0)
+    windows = data[indices_clamped].clone()
+    windows[indices < 0] = 0.0
+    return windows
+
+
+def build_aligned_windows(
+    data: torch.Tensor,
+    spring_history_size: int,
+    force_history_size: int,
+    spring_stride: int,
+    force_stride: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build zero-padded spring and force windows aligned to the same end timestep.
+
+    Both windows end at the same raw index, but each window samples backward at
+    its own stride. This is necessary because the two transformers may use
+    different history lengths and different strides.
+
+    Early timesteps for which the history would extend before the start of the
+    data are included and padded with zeros at the beginning of the window.
+
+    Args:
+        data: Input tensor of shape ``(batch_size, feature_dim)``.
+        spring_history_size: Length of the spring transformer's input window.
+        force_history_size: Length of the force transformer's input window.
+        spring_stride: Stride between spring history samples.
+        force_stride: Stride between force history samples.
+
+    Returns:
+        Tuple of ``(spring_windows, force_windows)`` with shapes
+        ``(batch_size, spring_history_size, feature_dim)`` and
+        ``(batch_size, force_history_size, feature_dim)``.
+    """
+    spring_windows = build_strided_windows(data, spring_history_size, spring_stride)
+    force_windows = build_strided_windows(data, force_history_size, force_stride)
+    return spring_windows, force_windows
+
+
+def build_frozen_spring_windows(
+    normal_windows: torch.Tensor,
+    velocity_idx: int,
+    threshold_lo: float,
+    threshold_hi: float,
+) -> torch.Tensor:
+    """Build spring windows where the buffer is frozen while the velocity stays within bounds.
+
+    Args:
+        normal_windows: Normalized sliding windows of shape [N, H, F].
+        velocity_idx: Index of the velocity channel.
+        threshold_lo: Normalized lower threshold bound; the buffer updates when the
+            velocity falls below it.
+        threshold_hi: Normalized upper threshold bound; the buffer updates when the
+            velocity rises above it.
+
+    Returns:
+        Spring windows of the same shape as ``normal_windows``.
+    """
+    num_samples = normal_windows.size(0)
+    spring_windows = normal_windows.clone()
+    last_moving_window = torch.zeros_like(normal_windows[0])
+
+    for i in range(num_samples):
+        velocity = normal_windows[i, -1, velocity_idx]
+        if (velocity > threshold_hi) | (velocity < threshold_lo):
+            last_moving_window = normal_windows[i].clone()
+        spring_windows[i] = last_moving_window
+
+    return spring_windows

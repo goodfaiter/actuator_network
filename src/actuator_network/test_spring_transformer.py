@@ -13,17 +13,29 @@ DEFAULT_MODEL_PATH = "/workspace/data/output_data/best_spring_transformer_latest
 def run_spring_transformer_inference(
     model_path: str,
     mcap_file_paths: list[str],
+    output_suffix: str = "_spring_transformer_predicted",
+    require_pruned: bool = False,
 ) -> list[str]:
     """Run spring/force transformer inference on the given MCAPs.
 
     One model call is one force tick, so inference is performed at the model's
     inference rate (every ``stride``-th preprocessed sample) by feeding the
-    latest normalized sample; the model maintains its internal force and spring
-    buffers. A fresh reset is performed per recording.
+    latest normalized sample; the model maintains its internal buffers. A fresh
+    reset is performed per recording.
+
+    Both checkpoint types are accepted: the full adaptive checkpoint
+    (``best_spring_transformer_latest.pt``) and the pruned frozen-latent
+    deployment checkpoints (``spring_transformer_frozen_<label>.pt``, see
+    ``actuator_network.export_frozen_latent``), whose embedded latent pins the
+    force transformer to one specific spring coefficient.
 
     Args:
         model_path: Path to the saved TorchScript model.
         mcap_file_paths: List of input MCAP files.
+        output_suffix: Suffix of the written ``*_predicted.mcap`` outputs.
+        require_pruned: When True, the checkpoint must be a pruned frozen-latent
+            deployment model (used by the dedicated ``test-spring-transformer-frozen``
+            entry point).
 
     Returns:
         List of output file paths.
@@ -36,6 +48,20 @@ def run_spring_transformer_inference(
     data_freq = model.metadata["frequency"]
     if data_freq <= 1:
         raise ValueError(f"Checkpoint stores an invalid frequency: {data_freq}")
+
+    if require_pruned:
+        if hasattr(model.model, "model_transformer"):
+            raise ValueError(
+                "This entry requires the pruned frozen-latent deployment checkpoints "
+                "spring_transformer_frozen_<label>.pt (exported by `uv run export-frozen-latent`); "
+                "the full adaptive checkpoint is not a frozen deployment model."
+            )
+        if not hasattr(model.model, "frozen_latent"):
+            raise ValueError("Checkpoint is not a spring transformer frozen deployment model.")
+        if float(model.model.frozen_latent.abs().max().item()) == 0.0:
+            raise ValueError(
+                "The pruned checkpoint stores an all-zero frozen latent; re-export with `uv run export-frozen-latent`."
+            )
 
     stride = model.metadata["stride"]
     input_cols = model.input_columns
@@ -75,7 +101,7 @@ def run_spring_transformer_inference(
         # the model's inference frequency (data_freq / stride).
         predicted_df = data_df_extrapolated.iloc[::stride]
 
-        output_path = mcap_file_path.replace(".mcap", "_spring_transformer_predicted.mcap")
+        output_path = mcap_file_path.replace(".mcap", f"{output_suffix}.mcap")
         data_df_to_mcap(predicted_df, output_path)
         print(f"  wrote {output_path}")
         output_paths.append(output_path)

@@ -24,6 +24,8 @@ from actuator_network.helpers.hyperparameters import SpringTransformerConfig
 from actuator_network.helpers.pandas_to_mcap import data_df_to_mcap
 from actuator_network.helpers.pandas_to_torch import (
     apply_normalization,
+    build_aligned_windows,
+    build_frozen_spring_windows,
     normalize_tensor,
     pandas_to_torch,
 )
@@ -41,94 +43,6 @@ DEFAULT_WANDB_PROJECT = "actuator_network"
 INPUT_COLS = ["measured_position_rad_data", "desired_position_rad_data", "measured_velocity_rad_per_sec_data"]
 OUTPUT_COL = "tendon_bota_force_newton_data"
 SPRING_COL = "spring_coeff"
-
-
-def _build_frozen_spring_windows(
-    normal_windows: torch.Tensor,
-    velocity_idx: int,
-    threshold_lo: float,
-    threshold_hi: float,
-) -> torch.Tensor:
-    """Build spring windows where the buffer is frozen while the velocity stays within bounds.
-
-    Args:
-        normal_windows: Normalized sliding windows of shape [N, H, F].
-        velocity_idx: Index of the velocity channel.
-        threshold_lo: Normalized lower threshold bound; the buffer updates when the
-            velocity falls below it.
-        threshold_hi: Normalized upper threshold bound; the buffer updates when the
-            velocity rises above it.
-
-    Returns:
-        Spring windows of the same shape as ``normal_windows``.
-    """
-    num_samples = normal_windows.size(0)
-    spring_windows = normal_windows.clone()
-    last_moving_window = torch.zeros_like(normal_windows[0])
-
-    for i in range(num_samples):
-        velocity = normal_windows[i, -1, velocity_idx]
-        if (velocity > threshold_hi) | (velocity < threshold_lo):
-            last_moving_window = normal_windows[i].clone()
-        spring_windows[i] = last_moving_window
-
-    return spring_windows
-
-
-def _build_aligned_windows(
-    data: torch.Tensor,
-    spring_history_size: int,
-    force_history_size: int,
-    spring_stride: int,
-    force_stride: int,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Build zero-padded spring and force windows aligned to the same end timestep.
-
-    Both windows end at the same raw index, but each window samples backward at
-    its own stride. This is necessary because the two transformers may use
-    different history lengths and different strides.
-
-    Early timesteps for which the history would extend before the start of the
-    data are included and padded with zeros at the beginning of the window.
-
-    Args:
-        data: Input tensor of shape ``(batch_size, feature_dim)``.
-        spring_history_size: Length of the spring transformer's input window.
-        force_history_size: Length of the force transformer's input window.
-        spring_stride: Stride between spring history samples.
-        force_stride: Stride between force history samples.
-
-    Returns:
-        Tuple of ``(spring_windows, force_windows)`` with shapes
-        ``(batch_size, spring_history_size, feature_dim)`` and
-        ``(batch_size, force_history_size, feature_dim)``.
-    """
-    batch_size, feature_dim = data.shape
-    if batch_size == 0:
-        empty_shape_spring = (0, spring_history_size, feature_dim)
-        empty_shape_force = (0, force_history_size, feature_dim)
-        return torch.empty(empty_shape_spring, device=data.device), torch.empty(empty_shape_force, device=data.device)
-
-    end_indices = torch.arange(batch_size, device=data.device)
-
-    spring_offsets = (
-        torch.arange(spring_history_size, device=data.device) * spring_stride
-        - (spring_history_size - 1) * spring_stride
-    )
-    spring_indices = end_indices.unsqueeze(1) + spring_offsets.unsqueeze(0)
-    spring_indices_clamped = spring_indices.clamp_min(0)
-    spring_windows = data[spring_indices_clamped].clone()
-    spring_windows[spring_indices < 0] = 0.0
-
-    force_offsets = (
-        torch.arange(force_history_size, device=data.device) * force_stride - (force_history_size - 1) * force_stride
-    )
-    force_indices = end_indices.unsqueeze(1) + force_offsets.unsqueeze(0)
-    force_indices_clamped = force_indices.clamp_min(0)
-    force_windows = data[force_indices_clamped].clone()
-    force_windows[force_indices < 0] = 0.0
-
-    return spring_windows, force_windows
 
 
 def compute_spring_dataset_stats(
@@ -234,14 +148,14 @@ def build_spring_dataset(
         spring_idx = col_names.index(SPRING_COL)
 
         features = apply_normalization(data_tensor[:, input_indices], input_mean, input_std)
-        spring_windows, force_windows = _build_aligned_windows(
+        spring_windows, force_windows = build_aligned_windows(
             features,
             spring_history_size=spring_history_size,
             force_history_size=history_size,
             spring_stride=spring_stride,
             force_stride=force_stride,
         )
-        spring_windows = _build_frozen_spring_windows(
+        spring_windows = build_frozen_spring_windows(
             spring_windows,
             velocity_idx=velocity_idx,
             threshold_lo=velocity_bounds[0],
