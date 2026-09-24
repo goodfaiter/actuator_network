@@ -43,6 +43,8 @@ test-transformer = "actuator_network.test_transformer:main"
 test-m5 = "actuator_network.test_m5:main"
 test-transformer-autoregressive = "actuator_network.test_transformer_autoregressive:main"
 test-spring-transformer = "actuator_network.test_spring_transformer:main"
+test-spring-transformer-frozen = "actuator_network.test_spring_transformer_frozen:main"
+export-frozen-latent = "actuator_network.export_frozen_latent:main"
 
 [project.urls]
 repository = "https://github.com/goodfaiter/actuator_network"

@@ -3,6 +3,7 @@
 import pandas as pd
 import torch
 
+from actuator_network.helpers.pandas_to_torch import build_aligned_windows, build_frozen_spring_windows
 from actuator_network.helpers.torch_model import (
     SpringCoefficientHead,
     SpringTransformerModel,
@@ -10,8 +11,6 @@ from actuator_network.helpers.torch_model import (
 )
 from actuator_network.helpers.wrapper import ScaledModelWrapper
 from actuator_network.train_spring_transformer import (
-    _build_aligned_windows,
-    _build_frozen_spring_windows,
     build_spring_dataset,
     compute_spring_dataset_stats,
 )
@@ -23,7 +22,7 @@ def test_build_frozen_spring_windows():
     normal_windows[:, :, 1] = torch.tensor([0.0, 0.0, 0.0])  # all below threshold
     normal_windows[2, -1, 1] = 0.5  # one moving window
 
-    frozen = _build_frozen_spring_windows(normal_windows, velocity_idx=1, threshold_lo=-0.1, threshold_hi=0.1)
+    frozen = build_frozen_spring_windows(normal_windows, velocity_idx=1, threshold_lo=-0.1, threshold_hi=0.1)
 
     # Before the first moving window, the buffer is zero-initialized.
     assert torch.allclose(frozen[0], torch.zeros_like(normal_windows[0]))
@@ -45,7 +44,7 @@ def test_build_aligned_windows_zero_pads_early_samples():
     spring_stride = 2
     force_stride = 1
 
-    spring_windows, force_windows = _build_aligned_windows(
+    spring_windows, force_windows = build_aligned_windows(
         data,
         spring_history_size=spring_history_size,
         force_history_size=force_history_size,

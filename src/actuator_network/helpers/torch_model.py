@@ -439,8 +439,8 @@ class SpringTransformerModel(torch.nn.Module):
         internal force history buffer + spring state per environment). With two
         tensors, ``x`` is a batch of normalized spring windows of shape
         ``[Batch, Spring History, Feature]`` and ``force_windows`` the matching
-        batch of force windows of shape ``[Batch, Force History, Feature]``; the
-        batched teacher-forced path is used and no state is touched.
+        batch of force windows of shape ``[Batch, Force History, Feature]``;
+        the batched teacher-forced path is used and no state is touched.
         """
         if force_windows is None:
             return self._forward_stateful(x)
@@ -522,6 +522,115 @@ class SpringTransformerModel(torch.nn.Module):
         spring_pred_norm = self.spring_coeff_head(latent_norm)  # [Batch, 1, 1]
 
         return torch.cat([force_pred_norm, spring_pred_norm], dim=-1)  # [Batch, 1, 2]
+
+
+class FrozenLatentForceModel(torch.nn.Module):
+    """Deployment-only pruned force estimator for the frozen-latent mode.
+
+    Contains strictly the components the frozen-latent path uses: the force
+    transformer, the small spring-coefficient head, the stateful force buffer
+    and the frozen latent. The spring transformer, spring buffer, EMA state,
+    update counter and velocity gating are pruned, so the scripted model loads
+    less memory and runs only the force path.
+
+    The class is built (with the already-compiled force transformer and
+    spring head of a spring transformer checkpoint) and exported by
+    ``actuator_network.export_frozen_latent`` as
+    ``spring_transformer_frozen_<label>.pt``. The frozen latent is embedded at
+    export time (``set_frozen_latent`` can retarget it afterwards) and survives
+    ``reset`` and batch-size changes, mirroring the frozen mode of
+    ``SpringTransformerModel``.
+
+    ``forward(x)`` expects ``x`` of shape ``[num_envs, 1, Feature]`` (the
+    latest normalized sample only, normalized by ``ScaledModelWrapper``); one
+    call is one force tick: the force buffer shifts and appends the current
+    sample, the shared frozen latent is expanded across the force window and
+    concatenated to the force buffer before the force transformer predicts
+    ``tendon_bota_force_newton_data``. The spring-coefficient head runs on the
+    frozen latent for the auxiliary channel.
+
+    The forward pass returns a 2-channel output:
+        0: ``tendon_bota_force_newton_data`` (normalized with force output stats)
+        1: ``spring_coeff`` (normalized with spring output stats)
+    """
+
+    def __init__(
+        self,
+        force_transformer: TorchTransformerModel,
+        spring_coeff_head: SpringCoefficientHead,
+        latent_dim: int,
+        input_size: int,
+        force_history_size: int,
+    ) -> None:
+        super().__init__()
+        self.force_transformer = force_transformer
+        self.spring_coeff_head = spring_coeff_head
+        self.latent_dim = latent_dim
+        self.input_size = input_size
+        self.force_history_size = force_history_size
+
+        # Stateful force buffer for online inference (one state per
+        # environment; zero-initialized to match the zero-padded training
+        # windows built in the normalized domain). Reassigned to the incoming
+        # batch size, so the scripted model works with any num_envs.
+        self.register_buffer("force_buffer", torch.zeros(1, force_history_size, input_size))
+        self.register_buffer("frozen_latent", torch.zeros(1, 1, latent_dim))
+
+    def _ensure_state(self, num_envs: int, device: torch.device) -> None:
+        """Re-initialize the force buffer to zeros when the input batch size changes.
+
+        Changing the batch size resets the force buffer (fresh session
+        semantics); the frozen latent is intentionally preserved.
+        """
+        if self.force_buffer.size(0) != num_envs:
+            self.force_buffer = torch.zeros(num_envs, self.force_history_size, self.input_size, device=device)
+
+    @torch.jit.export
+    def reset(self, reset_idx: torch.Tensor | None = None) -> None:
+        """Clear the force buffer (selected environments or all).
+
+        The frozen latent intentionally survives resets.
+
+        Args:
+            reset_idx: Optional bool tensor of length ``num_envs`` selecting the
+                environments to reset. When None, all environments are reset.
+        """
+        if reset_idx is None:
+            self.force_buffer.zero_()
+            return
+        mask = reset_idx.reshape(-1)
+        self.force_buffer[mask] = 0.0
+
+    @torch.jit.export
+    def set_frozen_latent(self, frozen_latent: torch.Tensor) -> None:
+        """(Re)set the frozen latent fed to the force transformer every tick.
+
+        Args:
+            frozen_latent: Normalized latent vector (model-output space) holding
+                ``latent_dim`` elements, e.g. of shape ``[1, 1, latent_dim]``.
+        """
+        latent = frozen_latent.reshape(1, 1, self.latent_dim)
+        self.frozen_latent.copy_(latent)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x shape: [num_envs, 1, Feature] (already normalized by ScaledModelWrapper)
+        self._ensure_state(x.shape[0], x.device)
+
+        # One call is one force tick: shift the force buffers for all environments.
+        force_shifted = torch.cat([self.force_buffer[:, 1:, :], x[:, -1:, :]], dim=1)
+        self.force_buffer.copy_(force_shifted)
+
+        # The frozen latent is shared across environments: expand it across the
+        # force history dimension and feed it to the force transformer.
+        frozen_latent = self.frozen_latent.expand(x.size(0), -1, -1)
+        latent_channel = frozen_latent.expand(-1, self.force_buffer.size(1), -1)
+        force_input_norm = torch.cat([self.force_buffer, latent_channel], dim=-1)
+        force_pred_norm = self.force_transformer(force_input_norm)  # [num_envs, 1, 1]
+
+        # Reconstruct the spring coefficient from the frozen latent.
+        spring_pred_norm = self.spring_coeff_head(frozen_latent)  # [num_envs, 1, 1]
+
+        return torch.cat([force_pred_norm, spring_pred_norm], dim=-1)  # [num_envs, 1, 2]
 
 
 class PositionalEncoding(torch.nn.Module):
