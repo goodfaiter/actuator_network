@@ -303,6 +303,16 @@ class SpringTransformerModel(torch.nn.Module):
     reconstructs the spring coefficient from the latent vector for the auxiliary
     output channel. ``reset(reset_idx)`` clears the per-environment states.
 
+    The spring transformer is called only on ticks where at least one
+    environment updates its spring buffer or has not produced a latent yet
+    (fresh/reset state); on all-frozen ticks the latent EMA continues from the
+    cached latent of the last transformer run, which is numerically identical
+    to re-running the transformer on the unchanged buffer. The buffer update
+    is branch-free (``torch.where`` instead of boolean-mask indexing) and the
+    per-tick spring sample ratio and EMA weight are stored as host-side
+    constants, so the scripted forward never inserts a device synchronization
+    to read them.
+
     The wrapper handles input normalization and output denormalization.
 
     Important: this model is designed for online inference with arbitrary batch
@@ -346,9 +356,13 @@ class SpringTransformerModel(torch.nn.Module):
         if spring_stride < force_stride:
             raise ValueError(f"spring_stride ({spring_stride}) must be >= force_stride ({force_stride})")
 
+        # Host-side constants: kept out of the per-tick loop so the scripted
+        # forward never inserts a device synchronization to read them.
+        self.spring_update_ratio: int = spring_stride // force_stride
+        self.spring_alpha: float = spring_alpha
+
         self.register_buffer("velocity_threshold_lo", torch.tensor(velocity_threshold_lo, dtype=torch.float32))
         self.register_buffer("velocity_threshold_hi", torch.tensor(velocity_threshold_hi, dtype=torch.float32))
-        self.register_buffer("spring_alpha", torch.tensor(spring_alpha, dtype=torch.float32))
         self.register_buffer("spring_stride", torch.tensor(spring_stride, dtype=torch.int64))
         self.register_buffer("force_stride", torch.tensor(force_stride, dtype=torch.int64))
         self.velocity_idx = velocity_idx
@@ -367,6 +381,11 @@ class SpringTransformerModel(torch.nn.Module):
         self.register_buffer("force_buffer", torch.zeros(1, force_history_size, input_size))
         self.register_buffer("last_latent", torch.zeros(1, 1, latent_dim))
         self.register_buffer("spring_update_counter", torch.zeros(1, dtype=torch.int64))
+        # Cached transformer output per env (used by the all-frozen fast path)
+        # and validity flag: an env that never ran the transformer (fresh or
+        # reset state) must run it once before the fast path may serve it.
+        self.register_buffer("latent_anchor", torch.zeros(1, 1, latent_dim))
+        self.register_buffer("anchor_valid", torch.zeros(1, dtype=torch.bool))
 
     def _ensure_state(self, num_envs: int, device: torch.device) -> None:
         """Re-initialize the per-env state to zeros when the input batch size changes.
@@ -381,7 +400,10 @@ class SpringTransformerModel(torch.nn.Module):
             self.force_buffer = torch.zeros(num_envs, self.force_history_size, input_size, device=device)
             self.last_latent = torch.zeros(num_envs, 1, self.latent_dim, device=device)
             self.spring_update_counter = torch.zeros(num_envs, dtype=torch.int64, device=device)
+            self.latent_anchor = torch.zeros(num_envs, 1, self.latent_dim, device=device)
+            self.anchor_valid = torch.zeros(num_envs, dtype=torch.bool, device=device)
 
+    @torch.jit.export
     def reset(self, reset_idx: torch.Tensor | None = None) -> None:
         """Clear the internal buffers and counters.
 
@@ -395,12 +417,16 @@ class SpringTransformerModel(torch.nn.Module):
             self.force_buffer.zero_()
             self.last_latent.zero_()
             self.spring_update_counter.zero_()
+            self.latent_anchor.zero_()
+            self.anchor_valid.zero_()
             return
         mask = reset_idx.reshape(-1)
         self.spring_buffer[mask] = 0.0
         self.force_buffer[mask] = 0.0
         self.last_latent[mask] = 0.0
         self.spring_update_counter[mask] = 0
+        self.latent_anchor[mask] = 0.0
+        self.anchor_valid = self.anchor_valid & torch.logical_not(mask)
 
     def _is_moving(self, velocity: torch.Tensor) -> torch.Tensor:
         return (velocity > self.velocity_threshold_hi) | (velocity < self.velocity_threshold_lo)
@@ -425,14 +451,16 @@ class SpringTransformerModel(torch.nn.Module):
         self._ensure_state(x.shape[0], x.device)
         last_velocity = x[:, -1, self.velocity_idx]
 
-        spring_update_ratio = int(self.spring_stride.item() // self.force_stride.item())
-        is_spring_sample = (self.spring_update_counter % spring_update_ratio) == 0
+        is_spring_sample = (self.spring_update_counter % self.spring_update_ratio) == 0
         spring_mask = is_spring_sample & self._is_moving(last_velocity)
 
-        if bool(spring_mask.any()):
-            # Shift the selected spring buffers and append the current normalized sample.
-            spring_shifted = torch.cat([self.spring_buffer[spring_mask][:, 1:, :], x[spring_mask][:, -1:, :]], dim=1)
-            self.spring_buffer[spring_mask] = spring_shifted
+        # Branchless masked spring-buffer update: shift + append the current
+        # normalized sample for the selected environments. ``torch.where`` is
+        # used instead of boolean-mask indexing so the scripted forward needs no
+        # implicit device synchronization.
+        spring_shifted = torch.cat([self.spring_buffer[:, 1:, :], x[:, -1:, :]], dim=1)
+        spring_mask3 = spring_mask.unsqueeze(1).unsqueeze(2)
+        self.spring_buffer = torch.where(spring_mask3, spring_shifted, self.spring_buffer)
 
         # One call is one force tick: shift the force buffers for all environments.
         force_shifted = torch.cat([self.force_buffer[:, 1:, :], x[:, -1:, :]], dim=1)
@@ -440,8 +468,23 @@ class SpringTransformerModel(torch.nn.Module):
 
         self.spring_update_counter.add_(1)
 
-        # Run model transformer on the normalized spring buffers to obtain latent vectors.
-        latent_norm = self.model_transformer(self.spring_buffer)  # [num_envs, 1, latent_dim]
+        # The spring transformer only changes the result when a spring buffer
+        # updates or an env has not produced a latent yet (fresh/reset state).
+        # On all-frozen ticks its output would equal the cached latent, so the
+        # EMA continues from the cache and the transformer is skipped: this is
+        # both faster and bit-identical to re-running the transformer on the
+        # unchanged buffer.
+        needs_run = spring_mask | torch.logical_not(self.anchor_valid)
+        if bool(needs_run.any()):
+            # Run model transformer on the normalized spring buffers to obtain latent vectors.
+            latent_norm = self.model_transformer(self.spring_buffer)  # [num_envs, 1, latent_dim]
+            self.latent_anchor.copy_(latent_norm)
+            self.anchor_valid.fill_(True)
+        else:
+            # Frozen fast path: the spring buffer is identical to the last
+            # transformer call, so the transformer would return the cached
+            # latent again.
+            latent_norm = self.latent_anchor
 
         # Smooth the latent estimates with exponential moving average to discourage
         # rapid switching between spring predictions.

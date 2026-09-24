@@ -643,3 +643,223 @@ def test_spring_transformer_force_estimator_multi_env():
     assert int(model.spring_update_counter[0].item()) == 0
     assert torch.allclose(model.spring_buffer[1, -1, :], moving_input[1, 0, :])
     assert int(model.spring_update_counter[1].item()) == 3
+
+
+def _make_stateful_spring_model(device: torch.device, seed: int = 0, **overrides) -> SpringTransformerModel:
+    """Create a small stateful spring transformer for the stateful tests below."""
+    torch.manual_seed(seed)
+    model_transformer = TorchTransformerModel(
+        input_size=2,
+        output_size=16,
+        num_layers=1,
+        history_size=8,
+        num_heads=2,
+        hidden_dim=16,
+        device=device,
+    )
+    force_transformer = TorchTransformerModel(
+        input_size=2 + 16,
+        output_size=1,
+        num_layers=1,
+        history_size=4,
+        num_heads=2,
+        hidden_dim=16,
+        device=device,
+    )
+    spring_coeff_head = SpringCoefficientHead(latent_dim=16, device=device)
+    params: dict = dict(
+        model_transformer=model_transformer,
+        force_transformer=force_transformer,
+        spring_coeff_head=spring_coeff_head,
+        latent_dim=16,
+        velocity_idx=1,
+        velocity_threshold_lo=-0.1,
+        velocity_threshold_hi=0.1,
+        spring_alpha=0.3,
+        spring_stride=4,
+        force_stride=2,
+    )
+    params.update(overrides)
+    return SpringTransformerModel(**params)
+
+
+def _make_stateful_tick(x_pos: float, v0: float, v1: float) -> torch.Tensor:
+    """Build a two-env online input tick with the velocity channel indexed 1."""
+    x = torch.zeros(2, 1, 2)
+    x[:, 0, 0] = x_pos
+    x[0, 0, 1] = v0
+    x[1, 0, 1] = v1
+    return x
+
+
+def _reference_stateful_tick(
+    model: SpringTransformerModel,
+    x: torch.Tensor,
+    state: dict,
+) -> torch.Tensor:
+    """Replicate the pre-optimization ``_forward_stateful`` semantics.
+
+    The reference keeps its own state (separate from the model buffers) and
+    calls the model's stateless sub-modules, so outputs must match the
+    optimized model tick for tick.
+    """
+    spring_buffer = state["spring_buffer"]
+    force_buffer = state["force_buffer"]
+    last_latent = state["last_latent"]
+
+    last_velocity = x[:, -1, model.velocity_idx]
+    is_spring_sample = (state["counter"] % model.spring_update_ratio) == 0
+    moving = (last_velocity > model.velocity_threshold_hi) | (last_velocity < model.velocity_threshold_lo)
+    spring_mask = is_spring_sample & moving
+
+    if bool(spring_mask.any()):
+        shift = torch.cat([spring_buffer[spring_mask][:, 1:, :], x[spring_mask][:, -1:, :]], dim=1)
+        spring_buffer[spring_mask] = shift
+
+    force_shifted = torch.cat([force_buffer[:, 1:, :], x[:, -1:, :]], dim=1)
+    force_buffer.copy_(force_shifted)
+
+    state["counter"] += 1
+
+    latent_norm = model.model_transformer(spring_buffer)
+    smoothed_latent = model.spring_alpha * latent_norm + (1.0 - model.spring_alpha) * last_latent
+    last_latent.copy_(smoothed_latent)
+
+    latent_channel = smoothed_latent.expand(-1, force_buffer.size(1), -1)
+    force_input_norm = torch.cat([force_buffer, latent_channel], dim=-1)
+    force_pred_norm = model.force_transformer(force_input_norm)
+    spring_pred_norm = model.spring_coeff_head(smoothed_latent)
+
+    return torch.cat([force_pred_norm, spring_pred_norm], dim=-1)
+
+
+def _reference_reset_state(state: dict, reset_idx: torch.Tensor | None = None) -> None:
+    """Mirror ``SpringTransformerModel.reset`` on the reference state."""
+    if reset_idx is None:
+        state["spring_buffer"].zero_()
+        state["force_buffer"].zero_()
+        state["last_latent"].zero_()
+        state["counter"].zero_()
+        return
+    mask = reset_idx.reshape(-1)
+    state["spring_buffer"][mask] = 0.0
+    state["force_buffer"][mask] = 0.0
+    state["last_latent"][mask] = 0.0
+    state["counter"][mask] = 0
+
+
+def _reference_state_dict(model: SpringTransformerModel, num_envs: int) -> dict:
+    """Initialize the reference state with the model's fresh (zero) per-env state.
+
+    The model's registered buffers hold a single environment until the first
+    forward call resizes them, so the reference cannot just copy them.
+    """
+    device = next(model.parameters()).device
+    input_size = model.model_transformer.input_size
+    return dict(
+        spring_buffer=torch.zeros(num_envs, model.spring_history_size, input_size, device=device),
+        force_buffer=torch.zeros(num_envs, model.force_history_size, input_size, device=device),
+        last_latent=torch.zeros(num_envs, 1, model.latent_dim, device=device),
+        counter=torch.zeros(num_envs, dtype=torch.int64, device=device),
+    )
+
+
+def test_stateful_frozen_skip_equivalence():
+    """The optimized stateful path must match the original semantics tick for tick.
+
+    Drives moving, frozen, fresh, and selectively-reset environments and
+    compares against an inline reference of the original semantics.
+    """
+    device = torch.device("cpu")
+    model = _make_stateful_spring_model(device, seed=0)
+    model.eval()
+
+    # The default model has spring_stride=4, force_stride=2 (every other tick
+    # is a spring sample tick).
+    ticks = [
+        _make_stateful_tick(0.0, 0.0, 0.0),  # both frozen: transformer runs once (fresh state)
+        _make_stateful_tick(0.1, 0.0, 0.5),  # env 1 moving but no spring sample: buffers frozen
+        _make_stateful_tick(0.2, 0.3, 0.5),  # spring sample: both update
+        _make_stateful_tick(0.3, 0.0, 0.0),  # both frozen
+        _make_stateful_tick(0.4, -0.5, 0.0),  # spring sample: env 0 updates with negative velocity
+        _make_stateful_tick(0.5, 0.0, 0.0),  # both frozen
+        _make_stateful_tick(0.6, 2.0, -2.0),  # spring sample: both update
+        _make_stateful_tick(0.7, 0.0, 0.0),  # both frozen
+    ]
+
+    model.reset()
+    state = _reference_state_dict(model, num_envs=2)
+
+    for i, x in enumerate(ticks):
+        if i == 5:
+            # Selectively reset env 0 mid-run; env 1 keeps its state.
+            reset_mask = torch.tensor([True, False])
+            model.reset(reset_mask)
+            _reference_reset_state(state, reset_mask)
+        out = model(x)
+        out_ref = _reference_stateful_tick(model, x, state)
+        assert torch.allclose(out, out_ref, rtol=1e-5, atol=1e-6), (
+            f"tick {i}: max diff {(out - out_ref).abs().max().item()}"
+        )
+
+
+def test_stateful_frozen_skip_reduces_transformer_calls():
+    """All-frozen ticks skip the spring transformer without changing outputs."""
+    device = torch.device("cpu")
+    torch.manual_seed(2)
+    model = _make_stateful_spring_model(device, seed=2)
+    model.eval()
+
+    calls = {"count": 0}
+    original_forward = model.model_transformer.forward
+
+    def counting_forward(x: torch.Tensor) -> torch.Tensor:
+        calls["count"] += 1
+        return original_forward(x)
+
+    model.model_transformer.forward = counting_forward
+
+    still = _make_stateful_tick(0.0, 0.0, 0.0)
+    still = still[:1]
+    moving = _make_stateful_tick(0.0, 1.0, 0.0)
+    moving = moving[:1]
+
+    # Tick order (spring sample every other tick): fresh run, frozen, moving run,
+    # frozen, moving run, then frozen ticks served from the cached latent.
+    ticks = [still, still, moving, still, moving, still, still, still]
+    for x in ticks:
+        model(x)
+    assert calls["count"] == 3
+
+
+def test_stateful_frozen_skip_scripted_matches_eager():
+    """The scripted optimized model matches eager outputs for identical state."""
+    device = torch.device("cpu")
+    model = _make_stateful_spring_model(device, seed=3)
+    model.eval()
+
+    ticks = [
+        _make_stateful_tick(0.0, 0.0, 0.0),
+        _make_stateful_tick(0.1, 0.0, 0.0),
+        _make_stateful_tick(0.2, 1.0, 1.0),
+        _make_stateful_tick(0.3, 1.0, 1.0),  # moving but not a spring sample tick
+        _make_stateful_tick(0.4, 0.0, 0.0),
+        _make_stateful_tick(0.5, 1.0, -1.0),
+        _make_stateful_tick(0.6, 0.0, 0.0),
+    ]
+
+    model.reset()
+    expected = [model(x) for x in ticks]
+
+    scripted = torch.jit.script(model)
+    scripted.reset()
+    for i, (x, ref) in enumerate(zip(ticks, expected)):
+        out = scripted(x)
+        assert torch.allclose(out, ref, rtol=1e-5, atol=1e-6), f"tick {i}: max diff {(out - ref).abs().max().item()}"
+
+    # A batch change re-initializes the per-env state in the scripted copy.
+    single = _make_stateful_tick(0.0, 0.0, 0.0)[:1]
+    wide = torch.cat([single, single, single], dim=0)  # 3 envs
+    wide[0, 0, 1] = 1.0
+    out = scripted(wide)
+    assert out.shape == (3, 1, 2)
