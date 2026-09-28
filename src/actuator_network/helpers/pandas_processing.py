@@ -41,9 +41,9 @@ def process_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     # Acceleration of motor
     df["calculated_acceleration_meter_per_sec2_data"] = derivate_signal(df["measured_velocity_rad_per_sec_data"], dt=dt) * radius
     df["calculated_dynamic_force_newton_data"] = df["calculated_acceleration_meter_per_sec2_data"] * mass
-    df["calculated_inertia_torque_Nm_data"] = df["calculated_acceleration_meter_per_sec2_data"] * inertia
     df["calculated_motor_torque_Nm_data"] = df["delta_position_rad_data"] * motor_gain
     df["calculated_acceleration_rad_per_sec2_data"] = derivate_signal(df["measured_velocity_rad_per_sec_data"], dt=dt)
+    df["calculated_inertia_torque_Nm_data"] = df["calculated_acceleration_rad_per_sec2_data"] * inertia
     # fric = inerta - external - motor
     df["calculated_friction_torque_Nm_data"] = (
         df["calculated_inertia_torque_Nm_data"] - df["bota_wrench_N_and_Nm_torque_z"] - df["calculated_motor_torque_Nm_data"]
