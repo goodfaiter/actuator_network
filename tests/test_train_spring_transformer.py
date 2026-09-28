@@ -797,9 +797,7 @@ def test_stateful_frozen_skip_equivalence():
             _reference_reset_state(state, reset_mask)
         out = model(x)
         out_ref = _reference_stateful_tick(model, x, state)
-        assert torch.allclose(out, out_ref, rtol=1e-5, atol=1e-6), (
-            f"tick {i}: max diff {(out - out_ref).abs().max().item()}"
-        )
+        assert torch.allclose(out, out_ref, rtol=1e-5, atol=1e-6), f"tick {i}: max diff {(out - out_ref).abs().max().item()}"
 
 
 def test_stateful_frozen_skip_reduces_transformer_calls():

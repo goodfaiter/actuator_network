@@ -167,10 +167,7 @@ def build_frozen_latent_model(
     """
     inner = model.model
     if not hasattr(inner, "model_transformer"):
-        raise ValueError(
-            "Checkpoint is already pruned (frozen-latent only); "
-            "the export requires the full spring transformer checkpoint."
-        )
+        raise ValueError("Checkpoint is already pruned (frozen-latent only); the export requires the full spring transformer checkpoint.")
 
     pruned_model = FrozenLatentForceModel(
         force_transformer=inner.force_transformer,  # already-compiled submodule

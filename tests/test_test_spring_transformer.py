@@ -78,10 +78,7 @@ def test_run_spring_transformer_inference_writes_predictions(tmp_path):
         # The predicted recording holds only the inferred samples; per topic the
         # timestamps are spaced at the model's inference rate (200 Hz / 20),
         # expressed in nanoseconds.
-        timestamps = [
-            message.log_time_ns
-            for message in read_ros2_messages(output_paths[0], topics=["/tendon_bota_force_newton_data"])
-        ]
+        timestamps = [message.log_time_ns for message in read_ros2_messages(output_paths[0], topics=["/tendon_bota_force_newton_data"])]
         assert len(timestamps) > 1
 
         spacings = np.diff(timestamps)
@@ -172,15 +169,12 @@ def test_run_spring_transformer_inference_frozen_latent(tmp_path):
         # The embedded latent is constant: the spring channel must be constant
         # and equal the denormalized coefficient head output of that latent.
         expected_spring = float(spring_coeff_head(frozen_latent)[0, 0, 0])
-        spring_values = [
-            message.ros_msg.data for message in read_ros2_messages(output_paths[0], topics=["/spring_coeff_predicted"])
-        ]
+        spring_values = [message.ros_msg.data for message in read_ros2_messages(output_paths[0], topics=["/spring_coeff_predicted"])]
         assert len(spring_values) > 0
         assert np.allclose(spring_values, expected_spring, atol=1e-5)
 
         # The force channel varies with the live dynamics but is populated.
         force_values = [
-            message.ros_msg.data
-            for message in read_ros2_messages(output_paths[0], topics=["/tendon_bota_force_newton_data_predicted"])
+            message.ros_msg.data for message in read_ros2_messages(output_paths[0], topics=["/tendon_bota_force_newton_data_predicted"])
         ]
         assert not np.allclose(force_values, 0.0)

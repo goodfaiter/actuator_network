@@ -16,9 +16,7 @@ def plot_minimap(des):
 
     time_axis = np.arange(len(des)) * 1 / 80
 
-    plt.plot(
-        time_axis, des, marker="", linestyle="-", label="Desired Position [rad]", color="red", alpha=0.8, markersize=4
-    )
+    plt.plot(time_axis, des, marker="", linestyle="-", label="Desired Position [rad]", color="red", alpha=0.8, markersize=4)
 
     # Add labels and title
     # plt.xlabel('Time [s]')

@@ -444,9 +444,7 @@ def main():
     for (mcap_file_path, _), df in zip(val_mcap_files, val_dataframes):
         data_df_to_mcap(df, mcap_file_path.replace(".mcap", "_processed.mcap"))
 
-    latest_prefix = (
-        f"spring_transformer_sweep_{wandb.run.id}_" if wandb.run.sweep_id is not None else "spring_transformer_"
-    )
+    latest_prefix = f"spring_transformer_sweep_{wandb.run.id}_" if wandb.run.sweep_id is not None else "spring_transformer_"
 
     print("Running training...")
     train_spring_transformer(

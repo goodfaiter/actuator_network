@@ -2,8 +2,6 @@
 
 from actuator_network.helpers.hyperparameters import (
     BaseTrainingConfig,
-    M5FrictionConfig,
-    M5TransformerConfig,
     MlpConfig,
     RnnConfig,
     SpringTransformerConfig,
@@ -101,36 +99,6 @@ def test_transformer_autoregressive_config_inherits_transformer():
     assert config.output_cols == ["tendon_bota_force_newton_data"]
 
 
-def test_m5_friction_config_defaults():
-    """The M5 friction config defaults should match train_m5.py."""
-    config = M5FrictionConfig.defaults()
-    assert config.data_freq == 200
-    assert config.num_epochs == 2000
-    assert config.learning_rate == 0.01
-    assert config.patience == 200
-    assert config.trainable_motor_gain is False
-
-
-def test_m5_transformer_config_defaults():
-    """The M5 + Transformer config defaults should match train_m5_transformer.py."""
-    config = M5TransformerConfig.defaults()
-    assert config.history_size == 150
-    assert config.stride == 2
-    assert config.inference_freq == 100
-    assert config.m5_trainable is False
-    assert config.motor_gain_trainable is False
-    assert config.aux_weight == 0.0
-    assert config.num_epochs == 50
-    assert config.batch_size == 1024
-    assert config.val_fraction == 1.0
-    assert config.model_output_cols == [
-        "tendon_bota_force_newton_data",
-        "tau_motor_newton_data",
-        "tau_friction_newton_data",
-        "tau_external_pred_newton_data",
-    ]
-
-
 def test_spring_transformer_config_defaults():
     """The spring config defaults should match train_spring_transformer.py."""
     config = SpringTransformerConfig.defaults()
@@ -144,33 +112,23 @@ def test_spring_transformer_config_defaults():
     assert config.force_stride == 2
     assert config.spring_num_layers == 1
     assert config.spring_num_heads == 4
-    assert config.spring_hidden_dim == 112
+    assert config.spring_hidden_dim == 48
     assert config.spring_activation == "relu"
     assert config.force_num_layers == 2
     assert config.force_num_heads == 4
-    assert config.force_hidden_dim == 72
+    assert config.force_hidden_dim == 36
     assert config.force_activation == "relu"
     assert config.val_fraction == 1.0
 
 
 def test_spring_transformer_config_is_valid_requires_divisible_heads_and_even_dim():
     """Valid configs require hidden_dim to be divisible by num_heads and even."""
-    assert SpringTransformerConfig(
-        spring_hidden_dim=32, spring_num_heads=4, force_hidden_dim=64, force_num_heads=8
-    ).is_valid()
-    assert not SpringTransformerConfig(
-        spring_hidden_dim=32, spring_num_heads=6, force_hidden_dim=64, force_num_heads=8
-    ).is_valid()
-    assert not SpringTransformerConfig(
-        spring_hidden_dim=32, spring_num_heads=4, force_hidden_dim=64, force_num_heads=6
-    ).is_valid()
+    assert SpringTransformerConfig(spring_hidden_dim=32, spring_num_heads=4, force_hidden_dim=64, force_num_heads=8).is_valid()
+    assert not SpringTransformerConfig(spring_hidden_dim=32, spring_num_heads=6, force_hidden_dim=64, force_num_heads=8).is_valid()
+    assert not SpringTransformerConfig(spring_hidden_dim=32, spring_num_heads=4, force_hidden_dim=64, force_num_heads=6).is_valid()
     # Odd hidden_dim values are rejected even when divisible by num_heads.
-    assert not SpringTransformerConfig(
-        spring_hidden_dim=33, spring_num_heads=1, force_hidden_dim=64, force_num_heads=8
-    ).is_valid()
-    assert not SpringTransformerConfig(
-        spring_hidden_dim=32, spring_num_heads=4, force_hidden_dim=21, force_num_heads=1
-    ).is_valid()
+    assert not SpringTransformerConfig(spring_hidden_dim=33, spring_num_heads=1, force_hidden_dim=64, force_num_heads=8).is_valid()
+    assert not SpringTransformerConfig(spring_hidden_dim=32, spring_num_heads=4, force_hidden_dim=21, force_num_heads=1).is_valid()
 
 
 def test_from_wandb_config_uses_defaults_for_missing_keys():
@@ -180,8 +138,6 @@ def test_from_wandb_config_uses_defaults_for_missing_keys():
     assert RnnConfig.from_wandb_config({}) == RnnConfig.defaults()
     assert TransformerConfig.from_wandb_config({}) == TransformerConfig.defaults()
     assert TransformerAutoregressiveConfig.from_wandb_config({}) == TransformerAutoregressiveConfig.defaults()
-    assert M5FrictionConfig.from_wandb_config({}) == M5FrictionConfig.defaults()
-    assert M5TransformerConfig.from_wandb_config({}) == M5TransformerConfig.defaults()
     assert SpringTransformerConfig.from_wandb_config({}) == SpringTransformerConfig.defaults()
 
 

@@ -2,8 +2,6 @@ import math
 
 import torch
 
-from actuator_network.helpers.m5_model import M5FrictionModel
-
 
 def _get_activation(activation: str) -> torch.nn.Module:
     """Return a PyTorch activation module from its name."""
@@ -141,118 +139,6 @@ class TorchTransformerModel(torch.nn.Module):
         output = self.output_sequence(x)
 
         return output.unsqueeze(1)  # Unsqueeze to keep consistent output shape
-
-
-class M5TransformerPhysicsModel(torch.nn.Module):
-    """Transformer predicts tau_external, then M5 computes friction and physics yields the final force.
-
-    The wrapped Transformer outputs a normalized tendon-force estimate. That estimate is
-    denormalized and fed into the M5 friction model as tau_external. M5 returns tau_friction,
-    and the final output is tau_external_calculated = tau_motor - tau_friction.
-
-    Normalization statistics are not stored by this model; the ScaledModelWrapper passes
-    its own buffers (flattened to 1-D) into the forward call, so the wrapper is the single
-    source of truth for normalization.
-
-    The forward pass returns a 4-channel output:
-        0: tau_external_calculated
-        1: tau_motor
-        2: tau_friction
-        3: tau_external_pred
-    """
-
-    def __init__(
-        self,
-        m5: M5FrictionModel,
-        transformer: TorchTransformerModel,
-        delta_position_idx: int,
-        velocity_idx: int,
-    ) -> None:
-        super().__init__()
-        self.m5 = m5
-        self.transformer = transformer
-        self.delta_position_idx = delta_position_idx
-        self.velocity_idx = velocity_idx
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        input_mean: torch.Tensor,
-        input_std: torch.Tensor,
-        output_mean: torch.Tensor,
-        output_std: torch.Tensor,
-    ) -> torch.Tensor:
-        # x shape: [Batch, History, Feature Dim] (normalized by ScaledModelWrapper)
-        # input_mean/std: [Feature Dim]; output_mean/std: [Output Channels]
-        x_last = x[:, -1, :]
-
-        # Un-normalize the last timestep for the physical M5 inputs
-        delta_position_raw = (
-            x_last[:, self.delta_position_idx] * input_std[self.delta_position_idx]
-            + input_mean[self.delta_position_idx]
-        )
-        velocity_raw = x_last[:, self.velocity_idx] * input_std[self.velocity_idx] + input_mean[self.velocity_idx]
-        tau_motor = self.m5.compute_tau_motor(delta_position_raw)
-
-        # Transformer predicts the normalized tau_external
-        tau_external_pred_norm = self.transformer(x)  # [Batch, 1, Output Dim]
-
-        # Denormalize for M5, which expects physical units. The model is designed for a single
-        # output column, so we index the first (and only) output statistic.
-        tau_external_pred_phys = tau_external_pred_norm * output_std[0] + output_mean[0]
-        tau_external_pred_phys = tau_external_pred_phys.squeeze(1).squeeze(1)
-
-        # M5 predicts friction from velocity, motor torque, and predicted external torque
-        tau_friction = self.m5(velocity_raw, tau_motor, tau_external_pred_phys)
-
-        # Physics: tau_external = tau_motor - tau_friction
-        tau_external_calc_phys = tau_motor - tau_friction
-
-        # Normalize all quantities back so ScaledModelWrapper can denormalize consistently.
-        # All four channels share the same physical unit, so they use the same mean/std.
-        tau_external_calc_norm = (tau_external_calc_phys - output_mean[0]) / output_std[0]
-        tau_motor_norm = (tau_motor - output_mean[0]) / output_std[0]
-        tau_friction_norm = (tau_friction - output_mean[0]) / output_std[0]
-        tau_external_pred_norm = (tau_external_pred_phys - output_mean[0]) / output_std[0]
-
-        output = torch.stack(
-            [tau_external_calc_norm, tau_motor_norm, tau_friction_norm, tau_external_pred_norm], dim=-1
-        )
-        return output.unsqueeze(1)  # [Batch, 1, 4]
-
-
-class PlainM5PhysicsModel(torch.nn.Module):
-    """M5 friction model as a standalone force estimator.
-
-    Given delta_position and velocity, this model computes tau_motor and then
-    solves ``tau_external = tau_motor - tau_friction(velocity, tau_motor, tau_external)``
-    with a few fixed-point iterations. The forward pass returns a 4-channel output:
-
-        0: tau_external_calculated
-        1: tau_motor
-        2: tau_friction
-        3: tau_external_pred (identical to channel 0 for this model)
-    """
-
-    def __init__(self, m5: M5FrictionModel, num_iterations: int = 5) -> None:
-        super().__init__()
-        self.m5 = m5
-        self.num_iterations = num_iterations
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # x shape: [Batch, 2] -> [delta_position, velocity]
-        delta_position = x[:, 0]
-        velocity = x[:, 1]
-
-        tau_motor = self.m5.compute_tau_motor(delta_position)
-        tau_external = tau_motor
-        tau_friction = torch.zeros_like(tau_motor)
-        for _ in range(self.num_iterations):
-            tau_friction = self.m5(velocity, tau_motor, tau_external)
-            tau_external = tau_motor - tau_friction
-
-        output = torch.stack([tau_external, tau_motor, tau_friction, tau_external], dim=-1)
-        return output.unsqueeze(1)  # [Batch, 1, 4]
 
 
 class SpringCoefficientHead(torch.nn.Module):

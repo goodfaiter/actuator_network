@@ -1,312 +1,50 @@
 # Agent Notes: actuator_network
 
-This file documents the `actuator_network` project so that agents can work on it effectively without re-discovering the architecture each time.
+PyTorch package that processes ROS2 MCAP bag files and trains networks to estimate actuator tendon load (Newtons). Uses uv; the lockfile targets the CUDA 12.8 build of PyTorch.
 
-## Project purpose
-
-`actuator_network` is a PyTorch-based Python package that processes ROS2 MCAP bag files and trains neural networks to estimate or predict actuator tendon load (force in Newtons). It is intended for hardware experiments where load cells / weight sensors and motor state (desired position, measured position, measured velocity) are logged as ROS2 topics.
-
-Supported model families:
-
-- MLP (`TorchMlpModel`)
-- RNN (`TorchRNNModel`)
-- Transformer (`TorchTransformerModel`)
-- Autoregressive Transformer (`TorchTransformerModel` with force fed back as input)
-- M5 + Transformer physics-coupled model (`M5TransformerPhysicsModel`)
-- Plain M5 physics-coupled model (`PlainM5PhysicsModel`)
-
-The trained model is wrapped in `ScaledModelWrapper`, which includes input/output normalization, and exported as TorchScript for deployment.
-
-## Repository layout
+## Layout
 
 ```
-/workspace
-├── README.md                           # Human-facing project overview
-├── pyproject.toml                      # Package metadata + uv config
-├── uv.lock                             # Locked dependency tree
-├── .env.example                        # WANDB_API_KEY template
-├── entrypoint.sh                       # Docker entrypoint: uv sync + exec
-├── docker-compose.yml                  # dev service with GPU reservation
-├── Dockerfile                          # GPU container (CUDA 12.8, ROS2 Humble, uv, opencode)
-├── src/actuator_network/               # Main package
-│   ├── __init__.py
-│   ├── train_mlp.py                    # Entry point: train MLP
-│   ├── train_rnn.py                    # Entry point: train RNN
-│   ├── train_transformer.py            # Entry point: train Transformer
-│   ├── train_m5.py                     # Entry point: fit M5 friction model
-│   ├── train_m5_transformer.py         # Entry point: train M5 + Transformer jointly (JSON-only output, no TorchScript export)
-│   ├── train_transformer_autoregressive.py  # Entry point: train autoregressive Transformer
-│   ├── train_spring_transformer.py  # Entry point: train spring + force transformer pair (W&B sweep target)
-│   ├── export_frozen_latent.py        # Entry point: frozen-latent + pruned model export
-│   ├── test_mlp.py                     # Entry point: run MLP inference on test MCAPs
-│   ├── test_rnn.py                     # Entry point: run RNN inference on test MCAPs
-│   ├── test_transformer.py             # Entry point: run Transformer inference on test MCAPs
-│   ├── test_m5.py                      # Entry point: run M5 inference on test MCAPs
-│   ├── test_transformer_autoregressive.py   # Entry point: run autoregressive Transformer inference
-│   ├── test_spring_transformer.py # Entry point: run spring + force transformer inference
-│   ├── test_spring_transformer_frozen.py  # Entry point: run frozen-latent deployment inference
-│   ├── helpers/
-│   │   ├── mcap_to_pandas.py           # Read ROS2 MCAP → pandas DataFrame
-│   │   ├── pandas_processing.py        # Resample (extrapolate_dataframe), derive load/force; dt derived from index
-│   │   ├── pandas_to_torch.py          # Build history windows / sequences, normalize
-│   │   ├── pandas_to_mcap.py           # Write DataFrame columns back to MCAP
-│   │   ├── torch_model.py              # MLP, RNN, Transformer, M5 physics, spring transformer definitions
-│   │   ├── m5_model.py                 # M5 friction physics parameters (softplus-constrained)
-│   │   ├── data_pipeline.py            # Parallel MCAP loading + processed DataFrame parquet cache
-│   │   ├── rnn_pipeline.py             # Stateful (chunked) inference helpers
-│   │   ├── hyperparameters.py          # Dataclass configs for all entry points, sweep-overridable via wandb.config
-│   │   ├── trainer.py                  # Custom training loops (train / train_stateful) with W&B logging
-│   │   └── wrapper.py                  # ScaledModelWrapper + ModelSaver + TorchScript export
-│   └── plots/                          # Matplotlib scripts for paper figures
-│       ├── plot_contacts.py
-│       ├── plot_contacts_sine_contact.py
-│       ├── plot_ee_tracking.py
-│       ├── plot_ramp.py
-│       └── plot_rmse.py
-├── data/                               # Data directory (gitignored)
-│   ├── training_data/                  # Input MCAP files
-│   ├── output_data/                    # Saved models and predictions
-│   └── cache/processed_dataframes/     # Parquet cache of processed DataFrames (keyed by path + mtime + freq)
-├── tests/                              # pytest suite
-├── wandb_sweep/                        # W&B sweep configuration YAML
-└── .opencode/                          # opencode configuration
-    └── AGENTS.md                       # This file
+src/actuator_network/
+├── train_mlp.py / train_rnn.py / train_transformer.py / ...   # Train + inference entry points (thin wrappers, hardcoded MCAP lists)
+├── helpers/
+│   ├── mcap_to_pandas.py       # ROS2 MCAP → pandas
+│   ├── pandas_processing.py    # Resample (extrapolate_dataframe) + derived features; dt derived from index
+│   ├── pandas_to_torch.py      # Windowing / sequences / normalization
+│   ├── pandas_to_mcap.py       # pandas → MCAP
+│   ├── torch_model.py          # Model definitions
+│   ├── data_pipeline.py        # Parallel MCAP loading + processed DataFrame cache
+│   ├── rnn_pipeline.py         # Stateful (chunked) inference helpers
+│   ├── hyperparameters.py      # Dataclass configs, sweep-overridable via wandb.config
+│   ├── trainer.py              # Training loops with W&B logging
+│   └── wrapper.py              # ScaledModelWrapper + ModelSaver (TorchScript export)
+├── plots/                      # Matplotlib figure scripts (hardcoded paths)
+wandb_sweep/                    # W&B sweep YAML (train-spring-transformer is the sweep target)
+tests/                          # pytest suite
 ```
 
-## Environment and dependencies
-
-The project uses [uv](https://docs.astral.sh/uv/) for dependency management. The lockfile targets the CUDA 12.8 build of PyTorch.
-
-### Local uv workflow
+## Commands
 
 ```bash
-# Sync dependencies and install the package in editable mode
-uv sync
-uv pip install -e . --link-mode=copy
+uv sync && uv pip install -e . --link-mode=copy
 
-# Run commands
-uv run train-transformer
-uv run test-transformer
-```
-
-### Console scripts
-
-`pyproject.toml` exposes these scripts:
-
-- `train-mlp`
-- `train-rnn`
-- `train-transformer`
-- `train-m5`
-- `train-m5-transformer`
-- `train-transformer-autoregressive`
-- `train-spring-transformer`
-- `test-mlp`
-- `test-rnn`
-- `test-transformer`
-- `test-m5`
-- `test-transformer-autoregressive`
-- `test-spring-transformer`
-- `test-spring-transformer-frozen`
-- `export-frozen-latent`
-
-Run them with `uv run <script>`.
-
-### Docker workflow (optional)
-
-A fully provisioned GPU environment is available via Docker:
-
-```bash
-docker compose up -d dev
-docker exec -it actuator_network bash
-```
-
-The container entrypoint (`entrypoint.sh`) runs `uv sync` and `uv pip install -e .` automatically, then execs the container command.
-
-### Weights & Biases
-
-Training logs to W&B. The key is loaded from `.env` for Docker and can be exported locally:
-
-```bash
-cp .env.example .env
-# edit .env
-export WANDB_API_KEY=your_key_here
-```
-
-**Never commit the `.env` file or any API key.** It is already gitignored.
-
-## Typical workflow
-
-### 1. Prepare training data
-
-Place ROS2 MCAP files under `data/training_data/<date>/`. The expected logged topics are:
-
-- `/desired_position_rad` (`std_msgs/Float32`)
-- `/measured_position_rad` (`std_msgs/Float32`)
-- `/measured_velocity_rad_per_sec` (`std_msgs/Float32`)
-- `/weight_kg` (`std_msgs/Float32`)
-- `/imu/data_raw` (`sensor_msgs/Imu`) — currently parsed but not used in modeling
-
-### 2. Train a model
-
-```bash
-uv run train-transformer
-```
-
-Each training script:
-
-1. Reads every MCAP in its hardcoded train/val lists (hyperparameters come from dataclasses in `helpers/hyperparameters.py`, overridable via `wandb.config` during sweeps).
-2. Resamples to the configured frequency (usually 80 or 200 Hz).
-3. Computes derived columns (velocity, acceleration, dynamic force, load). The derivative timestep `dt` is derived from the resampled index spacing, so data must be resampled (`extrapolate_dataframe`) before `process_dataframe`.
-4. Writes a `_processed.mcap` next to each input file.
-5. Builds history windows / sequences.
-6. Normalizes inputs and outputs.
-7. Trains with MSE loss, Adam optimizer, and logs to Weights & Biases. A configurable `val_fraction` of the validation set is used as one fixed random subset each epoch to save time.
-8. Saves the best, final, and periodic checkpoints as TorchScript `.pt` files in `data/output_data/` (exception: `train_m5_transformer.py` persistently saves only the fitted M5 params JSON — the joint model is not exported as TorchScript).
-
-The `train_m5.py` and `train_m5_transformer.py` scripts now treat the motor gain `P` in `tau_motor = P * delta_position` as an optionally trainable parameter (positive-constrained via softplus). Set `trainable_motor_gain = True/False` in either script. All M5 friction coefficients (`K_v`, `K_c`, `K_m`, `K_e`, `K_cs`, `K_ms`, `K_es`) and the Stribeck parameters (`V_s`, `alpha`) are also positive-constrained via softplus. `train_m5_transformer.py` additionally loads a pre-fit M5 friction model from `data/output_data/m5_friction_params.json` as an initial guess, then jointly trains the Transformer and (optionally) the M5 friction parameters so that the final output is `tau_external_calculated = tau_motor - tau_friction(tau_external_predicted)`. It uses an auxiliary loss on the Transformer's `tau_external` prediction and gradient clipping, and saves the final fitted M5 parameters (including the learned motor gain) to `data/output_data/m5_joint_friction_params.json`. Set `m5_trainable = False` to keep the friction parameters frozen, and `motor_gain_trainable = False` to keep the gain frozen.
-
-Both M5-based deployable models now return a 4-channel output:
-
-- `tendon_bota_force_newton_data` (channel 0): `tau_external_calculated`
-- `tau_motor_newton_data` (channel 1)
-- `tau_friction_newton_data` (channel 2)
-- `tau_external_pred_newton_data` (channel 3): raw Transformer prediction for M5 + Transformer, or the same calculated external force for the plain M5 model
-
-All four channels share the same physical unit (Newtons) and the same output normalization statistics.
-
-`train_transformer_autoregressive.py` trains a Transformer that takes `delta_position`, `measured_velocity`, and the previous timestep's `tendon_bota_force_newton_data` as input (teacher forcing). The matching `test_transformer_autoregressive.py` runs closed-loop inference, feeding the model's own predictions back as the force input.
-
-Key configuration knobs in the training scripts:
-
-- `freq` / `data_freq` — target resampling frequency in Hz.
-- `stride` — step size between history samples (e.g. `4` reduces 80 Hz data to 20 Hz inference).
-- `num_hist` / `history_size` / `seq_length` — how many past samples the model sees.
-- `prediction` — `False` means estimation at the current timestep; `True` would shift labels forward.
-- `input_cols` / `output_cols` — which DataFrame columns are used.
-
-### Hyperparameter sweep with W&B
-
-`train_spring_transformer.py` is configured to run as the target program for a W&B sweep agent. Hyperparameters are read from `wandb.config` and fall back to the defaults in `SpringTransformerConfig` for a manual run.
-
-- The sweep configuration lives in `wandb_sweep/sweep_spring_transformer.yaml`. Paste it into the W&B web UI when creating a new sweep.
-- Transformer hidden dimensions are reparameterized via `*_num_heads` and `*_hidden_dim_per_head`; `SpringTransformerConfig.from_wandb_config()` computes `hidden_dim = num_heads * per_head` so the divisibility constraint is always satisfied.
-- Training uses a combined loss (`force MSE + aux_weight * spring MSE`), but validation (`val_loss`) uses only the force MSE (auxiliary spring loss disabled) for consistent comparison across runs.
-- Processed MCAP DataFrames are cached under `data/cache/processed_dataframes/` so sweep agents do not re-parse raw MCAPs on every run.
-- To launch agents after creating the sweep in W&B:
-  ```bash
-  cd /workspace
-  uv run wandb agent goodfaiter-epfl/actuator_network/<sweep-id>
-  ```
-- For a single manual run, use `uv run train-spring-transformer`.
-
-### 3. Run inference
-
-```bash
-uv run test-mlp
-uv run test-rnn
-uv run test-transformer
-uv run test-m5
-uv run test-transformer-autoregressive
-uv run test-spring-transformer
-```
-
-Each `test-*.py` script loads the matching `best_<model>_latest.pt` TorchScript model (e.g., `best_transformer_latest.pt`), reads its stored metadata — `input_columns`/`output_columns` and the `metadata` dict (`frequency`, `history_size`, `stride`) — and writes a `<input>_<model>_predicted.mcap` with the new `*_predicted` columns. The stored `frequency` is the data (preprocessing) rate the models were trained on; a model's output rate is `frequency / stride` for the tick-based spring pipeline and = `frequency` for all per-sample models. The predicted `.mcap` holds only the samples a model was called at, so for data_freq 200 / stride 2 the predicted `.mcap` is saved at 100 Hz.
-
-| Model | Checkpoint loaded | MCAP suffix |
-|---|---|---|
-| MLP | `best_mlp_latest.pt` | `_mlp_predicted.mcap` |
-| RNN | `best_rnn_latest.pt` | `_rnn_predicted.mcap` |
-| Transformer | `best_transformer_latest.pt` | `_transformer_predicted.mcap` |
-| Transformer (autoregressive) | `best_transformer_autoregressive_latest.pt` | `_transformer_autoregressive_predicted.mcap` |
-| M5 | `m5_friction_params.json` | `_m5_predicted.mcap` |
-| Spring Transformer | `best_spring_transformer_latest.pt` | `_spring_transformer_predicted.mcap` |
-| Spring Transformer (frozen deployment) | `spring_transformer_frozen_<label>.pt` | `_spring_transformer_frozen_predicted.mcap` |
-
-Frozen-latent deployment (see gotchas 4b/4c): export with `uv run export-frozen-latent`, then run the dedicated entry point `uv run test-spring-transformer-frozen` with the pruned `data/output_data/spring_transformer_frozen_<label>.pt` as `model_path` (outputs use the `_spring_transformer_frozen_predicted` suffix); the frozen latent is embedded in the checkpoint, no latent payload is needed. The shared `run_spring_transformer_inference` also still accepts a pruned checkpoint.
-
-### 4. Generate plots
-
-Plot scripts are self-contained Matplotlib notebooks that read prediction MCAPs from hardcoded paths and save PNGs to `src/actuator_network/plots/figures/`. Run individually, e.g.:
-
-```bash
-cd src/actuator_network/plots
-uv run python plot_rmse.py
-```
-
-## Code conventions
-
-- Use absolute paths under `/workspace` (or the repo root) in experiment scripts; data lives in `data/`.
-- Always import from the package namespace: `from actuator_network.helpers...`.
-- Keep model definitions in `helpers/torch_model.py`; do not add training logic there.
-- Keep data I/O in `helpers/mcap_to_pandas.py` and `helpers/pandas_to_mcap.py`.
-- Use `ScaledModelWrapper` as the deployment-facing model; normalization statistics and the RNN `h0` are registered buffers, and the remaining model metadata (`frequency`, `history_size`, `stride`) is stored in an annotated `metadata` dict so it is embedded in the TorchScript export.
-- `M5TransformerPhysicsModel` does not store its own statistics and is not exported as TorchScript: its `forward` takes the normalization stats as arguments. When calling that model directly (e.g. in training/tests), pass the flattened stats explicitly. `ScaledModelWrapper` only supports models whose `forward` takes a single `x` tensor (plus `h0` for RNNs).
-- Keep saving via `ModelSaver` (`script_and_save`), which uses `torch.jit.script` because it handles control flow and RNN state.
-- Do not commit `.pt`, `.pth`, MCAP files, `__pycache__`, `.env`, `.venv`, or `wandb/` runs (they are already gitignored).
-- Run `uv run ruff check src` and `uv run ruff format src` before finishing non-trivial changes.
-
-## Known issues and gotchas
-
-1. **Entry points are thin experiment wrappers.** Hyperparameters live in dataclasses in `helpers/hyperparameters.py`; each train/test script only hardcodes its MCAP path list. They work as `uv run <script>` entry points but are not a generic CLI yet.
-
-2. **`process_inputs_time_series` drops incomplete windows.** Sliding windows are built with fancy indexing; sequences that would extend past the end are dropped (no zero-padding). The spring transformer pipeline instead builds explicitly zero-padded windows in the normalized domain (`helpers/pandas_to_torch.build_aligned_windows`, padding = exact zeros) — an intentional difference; the deployable `SpringTransformerModel` zero-initializes its internal force/spring buffers to match.
-
-3. **`SpringTransformerModel` multi-env stateful online path.** `forward(x)` expects `x` of shape `[num_envs, 1, F]` (the latest normalized sample only); the model keeps per-environment internal force and spring buffers plus a spring update counter. One call is one force tick (clients call at the inference rate, every `stride`-th sample); the spring buffer updates only when the environment moves and a spring sample instant occurs. The state is **dynamic**: `_ensure_state` re-initializes it to zeros whenever the incoming batch size differs (a batch change resets all env states), so a single saved checkpoint works with any `num_envs`. Old scripted checkpoints keep fixed 1-env state; dynamic behavior requires a re-export. `reset(reset_idx: Tensor | None = None)` clears selected environments (mirroring `TimeSeriesBuffer.reset_idx`); it is exported to TorchScript via `@torch.jit.export` on `ScaledModelWrapper.reset`, and the loaded script exposes the inner state as `loaded.model.spring_buffer` / `loaded.model.reset(mask)`.
-
-4. **`test_spring_transformer.py` calls at the inference rate.** One model call is one force tick, so predictions are written only at every `stride`-th preprocessed sample (others stay zero); the model is loaded once and reset per recording.
-
-4b. **Frozen-latent deployment (spring signature pinned to one dataset).** `uv run export-frozen-latent` (entry point `export_frozen_deployment` in `export_frozen_latent.py`) computes, per dataset label, the mean latent over the dataset's frozen spring windows — built exactly as during training via `helpers/pandas_to_torch.build_strided_windows` + `build_frozen_spring_windows` (moved from `train_spring_transformer.py`), with all config read from the checkpoint itself — and writes `data/output_data/frozen_latent_<label>.pt` (`{"latent", "input_columns", "num_windows", "checkpoint"}`), an exported record of the computed latent (the same value is embedded in the pruned checkpoint of 4c).
-
-4c. **Pruned deployment-only model (`FrozenLatentForceModel`).** The same export additionally builds, per label, a pruned scripted model `data/output_data/spring_transformer_frozen_<label>.pt`: a `ScaledModelWrapper` around `FrozenLatentForceModel` (defined in `helpers/torch_model.py`) that keeps strictly the deployment components — the checkpoint's compiled `force_transformer` and `spring_coeff_head`, a dynamic-batch `force_buffer`, and the embedded `frozen_latent` (equal to the exported payload's latent). `model_transformer`, `spring_buffer`, EMA/anchor/counter state, stride and velocity-threshold buffers are dropped, so deployment loads less memory. One call is one force tick with the embedded latent (only the force buffer advances). It runs with the dedicated entry point `test-spring-transformer-frozen` (`test_spring_transformer_frozen.py`); it requires a pruned checkpoint with a non-zero embedded latent, refuses the full adaptive checkpoint, and outputs use the `_spring_transformer_frozen_predicted` suffix; no latent payload is needed (the loop and metadata are unchanged — the shared `run_spring_transformer_inference` also still accepts a pruned checkpoint). `set_frozen_latent` survives `reset()`/batch changes; the export rejects an already-pruned checkpoint. Outputs are verified against a manual reference of the same semantics; tests: `tests/test_spring_transformer_frozen.py`, `tests/test_test_spring_transformer_frozen.py`.
-
-5. **`process_dataframe` needs resampled data.** The derivative timestep `dt` is derived from the DataFrame index spacing, so always call `extrapolate_dataframe` before `process_dataframe`.
-
-6. **RNN hidden state.** `ScaledModelWrapper` registers `h0` only when the wrapped model has an `rnn` attribute. For deployment, call `model.reset()` to clear state between sequences.
-
-7. **Plot scripts are hardcoded to specific experimental files.** They will fail on a fresh checkout without the matching `data/` contents. They are intended for reproducing paper figures, not as a generic plotting CLI.
-
-8. **Tests exist under `tests/`.** The ROS2 environment installs pytest plugins that conflict with plain `uv run pytest`, so disable plugin autoloading when running tests:
-   ```bash
-   PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest tests/
-   ```
-   Agents adding non-trivial logic should add small sanity checks and run the command above.
-
-## Useful commands
-
-```bash
-# Sync / install
-uv sync
-uv pip install -e . --link-mode=copy
-
-# Train
-uv run train-mlp
-uv run train-rnn
-uv run train-transformer
-uv run train-m5
-uv run train-m5-transformer
-uv run train-transformer-autoregressive
-uv run train-spring-transformer
-
-# Inference
-uv run test-mlp
-uv run test-rnn
-uv run test-transformer
-uv run test-m5
-uv run test-transformer-autoregressive
-uv run test-spring-transformer
-uv run test-spring-transformer-frozen
-
-# Frozen-latent export (fixed-spring deployment mode)
+uv run train-mlp          # also: train-rnn, train-transformer,
+                          # train-transformer-autoregressive, train-spring-transformer
+uv run test-mlp           # also: test-rnn, test-transformer,
+                          # test-transformer-autoregressive, test-spring-transformer,
+                          # test-spring-transformer-frozen
 uv run export-frozen-latent
 
-# Plots
-cd src/actuator_network/plots
-uv run python plot_rmse.py
-
-# Lint / format
-uv run ruff check src tests
-uv run ruff format src tests
-
-# Tests
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest tests/
+uv run ruff check src tests && uv run ruff format src tests
 ```
+
+## Conventions and gotchas
+
+- Model definitions live in `helpers/torch_model.py`; training logic in the entry points; data I/O in `mcap_to_pandas.py` / `pandas_to_mcap.py`.
+- Call `extrapolate_dataframe` before `process_dataframe` — the derivative timestep is derived from the index spacing.
+- Deploy via `ScaledModelWrapper` (input/output normalization + a `metadata` dict with `frequency`/`history_size`/`stride`, embedded in the TorchScript export). Save with `ModelSaver` (`torch.jit.script`).
+- `process_inputs_time_series` drops incomplete windows (no padding).
+- `ScaledModelWrapper` only supports models whose `forward` takes a single `x` tensor (plus `h0` for RNNs); call `model.reset()` between sequences for RNNs.
+- Expected logged topics: `/desired_position_rad`, `/measured_position_rad`, `/measured_velocity_rad_per_sec`, `/weight_kg`, `/bota/wrench_N_and_Nm`, `/imu/data_raw` (parsed but unused).
+- Training logs to W&B; the key comes from `.env` (Docker) or `export WANDB_API_KEY=...`. Never commit `.env`, API keys, `.pt`, or MCAP files (all gitignored).

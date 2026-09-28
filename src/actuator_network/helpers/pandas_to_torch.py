@@ -15,9 +15,7 @@ def normalize_tensor(tensor: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, 
         dim=[i for i in range(tensor.dim() - 1)],
         keepdim=True,
     )
-    std[:] = (
-        torch.std(tensor, dim=[i for i in range(tensor.dim() - 1)], keepdim=True) + 1e-8
-    )  # Add small value to avoid division by zero
+    std[:] = torch.std(tensor, dim=[i for i in range(tensor.dim() - 1)], keepdim=True) + 1e-8  # Add small value to avoid division by zero
     with torch.no_grad():
         normalized_tensor = (tensor - mean) / std
 

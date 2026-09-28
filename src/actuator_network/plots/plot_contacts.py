@@ -79,6 +79,4 @@ for i, df in enumerate(dfs):
         ax2.set_xlabel("Time [s]")
 
     plt.tight_layout()
-    plt.savefig(
-        f"/workspace/src/actuator_network/plots/figures/contact_ramp_tracking_{i}.png", dpi=500, bbox_inches="tight"
-    )
+    plt.savefig(f"/workspace/src/actuator_network/plots/figures/contact_ramp_tracking_{i}.png", dpi=500, bbox_inches="tight")
