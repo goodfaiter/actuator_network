@@ -29,7 +29,7 @@ def process_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """
     mass = 0.03  # kg
     radius = 0.011  # m
-    motor_gain = 0.02  # Nm/rad
+    motor_gain = 0.03  # Nm/rad
     inertia = 0.001  # Nm*s^2/rad
 
     dt = (df.index[1] - df.index[0]).total_seconds() if len(df.index) > 1 else 1.0

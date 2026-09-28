@@ -32,7 +32,7 @@ uv run train-mlp          # also: train-rnn, train-transformer,
                           # train-transformer-autoregressive, train-spring-transformer
 uv run test-mlp           # also: test-rnn, test-transformer,
                           # test-transformer-autoregressive, test-spring-transformer,
-                          # test-spring-transformer-frozen
+                          # test-spring-transformer-frozen, test-m5
 uv run export-frozen-latent
 
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest tests/

@@ -278,3 +278,37 @@ class SpringTransformerConfig(BaseTrainingConfig):
             config.spring_stride = force_stride * cfg["spring_stride_multiplier"]
 
         return config
+
+
+@dataclass
+class M5FrictionConfig(BaseTrainingConfig):
+    """Hyperparameters for fitting the M5 friction envelope model.
+
+    The defaults match the current hardcoded values in ``train_m5.py``.
+    """
+
+    # Data/build parameters
+    data_freq: int = 200
+    # The measured velocity is quantized in steps of ~0.024 rad/s. Samples between
+    # the two thresholds are ambiguous and excluded from the fit.
+    static_velocity_threshold: float = 0.03  # rad/s; at or below it the joint is at rest (also the model dead zone)
+    velocity_threshold: float = 0.06  # rad/s; above it friction == max friction
+    min_moving_samples: int = 3  # moving run length required for moving samples
+    breakaway_min_static_samples: int = 10  # static run length required before a breakaway point
+    breakaway_window: int = 5  # breakaway target is max |tau_f| over this many static samples before motion
+
+    # Loss weights (moving-sample MSE has weight 1)
+    breakaway_weight: float = 1.0
+    static_bound_weight: float = 1.0
+    # Penalizes static samples below the envelope so it stays tight; relative to
+    # static_bound_weight this fits an expectile of 1 / (1 + ratio) of |tau_f|.
+    static_tightness_weight: float = 0.1
+
+    # Training parameters (full-batch optimization)
+    num_epochs: int = 5000
+    learning_rate: float = 0.01
+    patience: int = 500
+
+    def is_valid(self) -> bool:
+        """Return True if the static threshold does not exceed the moving threshold."""
+        return 0.0 <= self.static_velocity_threshold <= self.velocity_threshold
