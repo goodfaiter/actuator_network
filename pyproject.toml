@@ -5,7 +5,6 @@ description = "Package for processing mcap files and training an actuator networ
 authors = [
     {name = "Valentin Yuryev", email = "valentin.yuryev@gmail.com"},
 ]
-readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 dependencies = [
@@ -33,14 +32,11 @@ dev = [
 train-mlp = "actuator_network.train_mlp:main"
 train-rnn = "actuator_network.train_rnn:main"
 train-transformer = "actuator_network.train_transformer:main"
-train-m5 = "actuator_network.train_m5:main"
-train-m5-transformer = "actuator_network.train_m5_transformer:main"
 train-transformer-autoregressive = "actuator_network.train_transformer_autoregressive:main"
 train-spring-transformer = "actuator_network.train_spring_transformer:main"
 test-mlp = "actuator_network.test_mlp:main"
 test-rnn = "actuator_network.test_rnn:main"
 test-transformer = "actuator_network.test_transformer:main"
-test-m5 = "actuator_network.test_m5:main"
 test-transformer-autoregressive = "actuator_network.test_transformer_autoregressive:main"
 test-spring-transformer = "actuator_network.test_spring_transformer:main"
 test-spring-transformer-frozen = "actuator_network.test_spring_transformer_frozen:main"
@@ -66,7 +62,7 @@ torch = { index = "pytorch-cu128" }
 
 [tool.ruff]
 target-version = "py310"
-line-length = 120
+line-length = 140
 
 [tool.ruff.lint]
 select = [

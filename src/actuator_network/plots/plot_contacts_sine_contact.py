@@ -56,6 +56,4 @@ rmse_measured = np.sqrt(np.mean((df["load_newton_data_data"] - df["load_newton_d
 print(f"RMSE Measured vs Predicted: {rmse_measured:.2f} N")
 
 plt.tight_layout()
-plt.savefig(
-    "/workspace/src/actuator_network/plots/figures/contact_ramp_tracking_sine.png", dpi=500, bbox_inches="tight"
-)
+plt.savefig("/workspace/src/actuator_network/plots/figures/contact_ramp_tracking_sine.png", dpi=500, bbox_inches="tight")

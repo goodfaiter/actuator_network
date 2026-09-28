@@ -85,9 +85,7 @@ class MlpConfig(BaseTrainingConfig):
     hidden_layers: list[int] = field(default_factory=lambda: [256, 64, 16])
 
     # Data columns
-    input_cols: list[str] = field(
-        default_factory=lambda: ["delta_position_rad_data", "measured_velocity_rad_per_sec_data"]
-    )
+    input_cols: list[str] = field(default_factory=lambda: ["delta_position_rad_data", "measured_velocity_rad_per_sec_data"])
     output_cols: list[str] = field(default_factory=lambda: ["tendon_bota_force_newton_data"])
 
 
@@ -113,9 +111,7 @@ class RnnConfig(BaseTrainingConfig):
     chunk_batch_size: int = 4
 
     # Data columns
-    input_cols: list[str] = field(
-        default_factory=lambda: ["delta_position_rad_data", "measured_velocity_rad_per_sec_data"]
-    )
+    input_cols: list[str] = field(default_factory=lambda: ["delta_position_rad_data", "measured_velocity_rad_per_sec_data"])
     output_cols: list[str] = field(default_factory=lambda: ["tendon_bota_force_newton_data"])
 
 
@@ -146,9 +142,7 @@ class TransformerConfig(BaseTrainingConfig):
     num_epochs: int = 50
 
     # Data columns
-    input_cols: list[str] = field(
-        default_factory=lambda: ["delta_position_rad_data", "measured_velocity_rad_per_sec_data"]
-    )
+    input_cols: list[str] = field(default_factory=lambda: ["delta_position_rad_data", "measured_velocity_rad_per_sec_data"])
     output_cols: list[str] = field(default_factory=lambda: ["tendon_bota_force_newton_data"])
 
     def is_valid(self) -> bool:
@@ -188,53 +182,6 @@ class TransformerAutoregressiveConfig(TransformerConfig):
 
 
 @dataclass
-class M5FrictionConfig(BaseTrainingConfig):
-    """Hyperparameters for fitting the M5 friction model.
-
-    The defaults match the current hardcoded values in ``train_m5.py``.
-    """
-
-    # Data/build parameters
-    data_freq: int = 200
-
-    # Training parameters
-    num_epochs: int = 2000
-    learning_rate: float = 0.01
-    patience: int = 200
-    trainable_motor_gain: bool = False
-
-
-@dataclass
-class M5TransformerConfig(TransformerConfig):
-    """Hyperparameters for the M5 + Transformer physics-coupled pipeline.
-
-    The defaults match the current hardcoded values in
-    ``train_m5_transformer.py``.
-    """
-
-    # M5-specific parameters
-    m5_trainable: bool = False
-    motor_gain_trainable: bool = False
-    aux_weight: float = 0.0
-
-    # Training parameters
-    num_epochs: int = 50
-    learning_rate: float = 0.001
-    batch_size: int = 1024
-    val_fraction: float = 1.0
-
-    # Output channels produced by the physics-coupled model.
-    model_output_cols: list[str] = field(
-        default_factory=lambda: [
-            "tendon_bota_force_newton_data",
-            "tau_motor_newton_data",
-            "tau_friction_newton_data",
-            "tau_external_pred_newton_data",
-        ]
-    )
-
-
-@dataclass
 class SpringTransformerConfig(BaseTrainingConfig):
     """Hyperparameters for the spring transformer training pipeline.
 
@@ -252,8 +199,8 @@ class SpringTransformerConfig(BaseTrainingConfig):
     spring_stride: int = 4  # force_stride (2) * spring_stride_multiplier (2)
     spring_num_layers: int = 1
     spring_num_heads: int = 4
-    spring_hidden_dim: int = 112  # spring_num_heads (4) * spring_hidden_dim_per_head (28)
-    spring_latent_dim: int = 16
+    spring_hidden_dim: int = 48  # spring_num_heads (4) * spring_hidden_dim_per_head (28)
+    spring_latent_dim: int = 8
     spring_dropout: float = 0.3
     spring_activation: str = "relu"
 
@@ -262,7 +209,7 @@ class SpringTransformerConfig(BaseTrainingConfig):
     force_stride: int = 2
     force_num_layers: int = 2
     force_num_heads: int = 4
-    force_hidden_dim: int = 72  # force_num_heads (4) * force_hidden_dim_per_head (18)
+    force_hidden_dim: int = 36  # force_num_heads (4) * force_hidden_dim_per_head (18)
     force_dropout: float = 0.3
     force_activation: str = "relu"
 

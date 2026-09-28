@@ -59,9 +59,7 @@ def run_spring_transformer_inference(
         if not hasattr(model.model, "frozen_latent"):
             raise ValueError("Checkpoint is not a spring transformer frozen deployment model.")
         if float(model.model.frozen_latent.abs().max().item()) == 0.0:
-            raise ValueError(
-                "The pruned checkpoint stores an all-zero frozen latent; re-export with `uv run export-frozen-latent`."
-            )
+            raise ValueError("The pruned checkpoint stores an all-zero frozen latent; re-export with `uv run export-frozen-latent`.")
 
     stride = model.metadata["stride"]
     input_cols = model.input_columns

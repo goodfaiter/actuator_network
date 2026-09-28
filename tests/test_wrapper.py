@@ -4,9 +4,7 @@ import os
 
 import torch
 
-from actuator_network.helpers.m5_model import M5FrictionModel
 from actuator_network.helpers.torch_model import (
-    PlainM5PhysicsModel,
     SpringCoefficientHead,
     SpringTransformerModel,
     TorchMlpModel,
@@ -16,6 +14,17 @@ from actuator_network.helpers.torch_model import (
 from actuator_network.helpers.wrapper import ScaledModelWrapper
 
 DEVICE = torch.device("cpu")
+
+
+class _LinearMultiOutput(torch.nn.Module):
+    """A minimal single-tensor multi-output model (used as a wrapper-test vehicle)."""
+
+    def __init__(self):
+        super().__init__()
+        self.fc = torch.nn.Linear(2, 4)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.fc(x).unsqueeze(1)
 
 
 def _script_save_load(wrapped: ScaledModelWrapper, name: str) -> torch.jit.ScriptModule:
@@ -50,9 +59,7 @@ def test_wrapper_scripts_rnn_with_hidden_state(tmp_path):
     rnn = TorchRNNModel(input_size=2, hidden_size=4, num_layers=1, output_size=1, device=DEVICE, dropout=0.0)
     input_mean, input_std = torch.zeros(1, 2), torch.ones(1, 2)
     output_mean, output_std = torch.zeros(1, 1), torch.ones(1, 1)
-    wrapped = ScaledModelWrapper(
-        rnn, input_mean, input_std, output_mean, output_std, frequency=80, history_size=3, stride=1
-    )
+    wrapped = ScaledModelWrapper(rnn, input_mean, input_std, output_mean, output_std, frequency=80, history_size=3, stride=1)
     wrapped._tmpdir = tmp_path
 
     loaded = _script_save_load(wrapped, "rnn.pt")
@@ -61,15 +68,15 @@ def test_wrapper_scripts_rnn_with_hidden_state(tmp_path):
     assert out.shape == (1, 3, 1)
 
 
-def test_wrapper_scripts_plain_m5_with_identity_stats(tmp_path):
+def test_wrapper_scripts_multi_output_with_identity_stats(tmp_path):
     torch.manual_seed(0)
-    physics = PlainM5PhysicsModel(m5=M5FrictionModel())
+    physics = _LinearMultiOutput()
     input_mean, input_std = torch.zeros(1, 2), torch.ones(1, 2)
     output_mean, output_std = torch.zeros(1, 1), torch.ones(1, 1)
     wrapped = ScaledModelWrapper(physics, input_mean, input_std, output_mean, output_std, frequency=80, stride=1)
     wrapped._tmpdir = tmp_path
 
-    loaded = _script_save_load(wrapped, "plain_m5.pt")
+    loaded = _script_save_load(wrapped, "multi_output.pt")
 
     out = loaded(torch.randn(3, 2))
     assert out.shape == (3, 1, 4)

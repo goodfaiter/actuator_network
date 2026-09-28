@@ -204,9 +204,7 @@ def train(
         val_loss_sum = 0.0
         val_num_batches = 0
         with torch.no_grad():
-            for val_batch_inputs, val_batch_outputs in data_generator(
-                val_inputs_subset, val_outputs_subset, batch_size
-            ):
+            for val_batch_inputs, val_batch_outputs in data_generator(val_inputs_subset, val_outputs_subset, batch_size):
                 if isinstance(val_batch_inputs, tuple):
                     val_predictions = model(*val_batch_inputs)
                 else:
@@ -223,10 +221,7 @@ def train(
 
         # Log metrics
         current_lr = optimizer.param_groups[0]["lr"]
-        print(
-            f"Epoch [{epoch + 1}/{num_epochs}], Train Loss: {avg_train_loss:.4f}, "
-            f"Val Loss: {val_loss:.4f}, LR: {current_lr:.6f}"
-        )
+        print(f"Epoch [{epoch + 1}/{num_epochs}], Train Loss: {avg_train_loss:.4f}, Val Loss: {val_loss:.4f}, LR: {current_lr:.6f}")
 
         wandb.log({"train_loss": avg_train_loss, "val_loss": val_loss, "epoch": epoch + 1, "learning_rate": current_lr})
 
