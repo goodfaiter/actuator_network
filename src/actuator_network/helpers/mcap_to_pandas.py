@@ -47,6 +47,8 @@ def read_mcap_to_dataframe(file_path: str, topics: list = None) -> pd.DataFrame:
             "/measured_position_rad",
             "/measured_position_error_rad",
             "/measured_velocity_rad_per_sec",
+            "/desired_velocity_rad_per_sec",
+            "/measured_current_amp",
             "/bota/wrench_N_and_Nm",
         ]
 
