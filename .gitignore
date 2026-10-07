@@ -12,3 +12,4 @@ pres_video
 .env
 .venv/
 .ruff_cache/
+tests/*_predicted.mcap
