@@ -548,7 +548,11 @@ class M5EnvelopeFrictionModel(torch.nn.Module):
     so that quantization noise at rest does not modulate the envelope. ``v_dz``
     is a fixed buffer (saved in the state dict), not a fitted parameter.
 
-    All parameters are kept positive through a softplus reparameterization.
+    All parameters except ``alpha`` are kept positive through a softplus
+    reparameterization. ``alpha`` is bounded to ``[alpha_min, alpha_max]`` through
+    a sigmoid: ``alpha < 1`` gives an infinite slope at the dead-zone edge and a
+    large ``alpha`` approaches a step at ``v_s``, both of which make the envelope
+    hypersensitive to velocity. The bounds are buffers saved in the state dict.
     """
 
     PARAM_NAMES = ("K_v", "K_c", "K_m", "K_e", "v_s", "alpha", "K_cs", "K_ms", "K_es")
@@ -558,33 +562,49 @@ class M5EnvelopeFrictionModel(torch.nn.Module):
         "K_m": 0.1,
         "K_e": 0.1,
         "v_s": 0.1,
-        "alpha": 1.0,
+        "alpha": 1.5,
         "K_cs": 0.01,
         "K_ms": 0.1,
         "K_es": 0.1,
     }
     EPS = 1e-6
 
-    def __init__(self, init_params: dict[str, float] | None = None, device: torch.device = None, velocity_deadzone: float = 0.0):
+    def __init__(
+        self,
+        init_params: dict[str, float] | None = None,
+        device: torch.device = None,
+        velocity_deadzone: float = 0.0,
+        alpha_min: float = 1.0,
+        alpha_max: float = 2.0,
+    ):
         super().__init__()
         self.register_buffer("velocity_deadzone", torch.tensor(velocity_deadzone, device=device))
+        self.register_buffer("alpha_min", torch.tensor(alpha_min, device=device))
+        self.register_buffer("alpha_max", torch.tensor(alpha_max, device=device))
         params = {**self.DEFAULT_INIT, **(init_params or {})}
-        self.raw_params = torch.nn.ParameterDict(
-            {name: torch.nn.Parameter(self._inverse_softplus(torch.tensor(params[name], device=device))) for name in self.PARAM_NAMES}
-        )
+        raw = {name: self._inverse_softplus(torch.tensor(params[name], device=device)) for name in self.PARAM_NAMES}
+        raw["alpha"] = self._inverse_alpha(torch.tensor(params["alpha"], device=device))
+        self.raw_params = torch.nn.ParameterDict({name: torch.nn.Parameter(value) for name, value in raw.items()})
 
     @staticmethod
     def _inverse_softplus(x: torch.Tensor) -> torch.Tensor:
         return x + torch.log(-torch.expm1(-x))
 
+    def _inverse_alpha(self, alpha: torch.Tensor) -> torch.Tensor:
+        # Clamp inside (0, 1) so an initial value on a bound keeps a usable gradient.
+        span = (self.alpha_max - self.alpha_min).clamp_min(self.EPS)
+        return torch.logit(((alpha - self.alpha_min) / span).clamp(1e-3, 1 - 1e-3))
+
     def _param(self, name: str) -> torch.Tensor:
+        if name == "alpha":
+            return self.alpha_min + (self.alpha_max - self.alpha_min) * torch.sigmoid(self.raw_params[name])
         return torch.nn.functional.softplus(self.raw_params[name]) + self.EPS
 
     def forward(self, velocity: torch.Tensor, tau_motor: torch.Tensor, tau_external: torch.Tensor) -> torch.Tensor:
         p = {name: self._param(name) for name in self.PARAM_NAMES}
         velocity = torch.sign(velocity) * torch.relu(velocity.abs() - self.velocity_deadzone)
         coulomb_viscous = p["K_v"] * velocity.abs() + p["K_c"] + (p["K_m"] * tau_motor - p["K_e"] * tau_external).abs()
-        # clamp keeps the gradient w.r.t. alpha finite at v = 0.
+        # clamp keeps the gradient w.r.t. alpha finite at v = 0 (alpha >= 1 keeps the slope finite).
         stribeck = torch.exp(-((velocity / p["v_s"]).abs().clamp_min(1e-8) ** p["alpha"]))
         static = p["K_cs"] + (p["K_ms"] * tau_motor - p["K_es"] * tau_external).abs()
         return coulomb_viscous + stribeck * static

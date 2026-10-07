@@ -304,11 +304,15 @@ class M5FrictionConfig(BaseTrainingConfig):
     # static_bound_weight this fits an expectile of 1 / (1 + ratio) of |tau_f|.
     static_tightness_weight: float = 0.1
 
+    # Model bounds: Stribeck exponent range (alpha_min == alpha_max fixes alpha)
+    alpha_min: float = 1.0
+    alpha_max: float = 2.0
+
     # Training parameters (full-batch optimization)
     num_epochs: int = 5000
     learning_rate: float = 0.01
     patience: int = 500
 
     def is_valid(self) -> bool:
-        """Return True if the static threshold does not exceed the moving threshold."""
-        return 0.0 <= self.static_velocity_threshold <= self.velocity_threshold
+        """Return True if the velocity thresholds and alpha bounds are ordered."""
+        return 0.0 <= self.static_velocity_threshold <= self.velocity_threshold and 0.0 < self.alpha_min <= self.alpha_max

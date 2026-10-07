@@ -16,7 +16,7 @@ def _make_df(velocity, tau_motor, tau_external, friction) -> pd.DataFrame:
 
 
 def test_model_parameters_roundtrip():
-    init = {"K_v": 0.002, "K_c": 0.03, "v_s": 0.5, "alpha": 2.0}
+    init = {"K_v": 0.002, "K_c": 0.03, "v_s": 0.5, "alpha": 1.7}
     params = M5EnvelopeFrictionModel(init_params=init).physical_parameters()
     for name, value in init.items():
         assert abs(params[name] - value) < 1e-5
@@ -44,6 +44,20 @@ def test_breakaway_does_not_cross_dataframes():
     samples = build_friction_samples([first, second], velocity_threshold=0.01, breakaway_min_static_samples=1, device="cpu")
 
     assert not samples["breakaway"].any()
+
+
+def test_model_alpha_bounds():
+    model = M5EnvelopeFrictionModel(alpha_min=1.0, alpha_max=2.0)
+    with torch.no_grad():
+        model.raw_params["alpha"].fill_(-50.0)
+        assert torch.isclose(model._param("alpha"), torch.tensor(1.0))
+        model.raw_params["alpha"].fill_(50.0)
+        assert torch.isclose(model._param("alpha"), torch.tensor(2.0))
+    # An initial value outside the bounds is clamped into them, and the bounds are saved.
+    loaded = M5EnvelopeFrictionModel(init_params={"alpha": 0.3}, alpha_min=1.2, alpha_max=1.2)
+    assert abs(loaded.physical_parameters()["alpha"] - 1.2) < 1e-6
+    loaded.load_state_dict(model.state_dict())
+    assert torch.isclose(loaded.alpha_min, torch.tensor(1.0)) and torch.isclose(loaded.alpha_max, torch.tensor(2.0))
 
 
 def test_build_friction_samples_dead_band_and_breakaway_window():

@@ -204,7 +204,12 @@ def train_m5(
             f"{int(samples['breakaway'].sum())} breakaway, {int(samples['static'].sum())} static"
         )
 
-    model = M5EnvelopeFrictionModel(device=device, velocity_deadzone=config.static_velocity_threshold)
+    model = M5EnvelopeFrictionModel(
+        device=device,
+        velocity_deadzone=config.static_velocity_threshold,
+        alpha_min=config.alpha_min,
+        alpha_max=config.alpha_max,
+    )
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=max(config.patience // 4, 1))
 
