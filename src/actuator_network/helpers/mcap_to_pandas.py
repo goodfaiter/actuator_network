@@ -43,7 +43,7 @@ def read_mcap_to_dataframe(file_path: str, topics: list = None) -> pd.DataFrame:
         topics = [
             "/imu/data_raw",
             "/weight_kg",
-            "/desired_position_rad",
+            # "/desired_position_rad",
             "/measured_position_rad",
             "/measured_position_error_rad",
             "/measured_velocity_rad_per_sec",
