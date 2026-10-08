@@ -12,6 +12,8 @@ Usage:
 
 """
 
+import json
+
 import torch
 
 from actuator_network.helpers.data_pipeline import load_mcap_dataframes_parallel_cached
@@ -37,14 +39,21 @@ OUTPUT_SUFFIX = "_m5_predicted"
 def load_m5_model(model_path: str, device: torch.device) -> M5EnvelopeFrictionModel:
     """Load the fitted M5 envelope model from its saved state dict.
 
+    The params JSON saved next to the model provides the fixed-parameter set
+    so that the state dict with fixed buffers loads strictly.
+
     Args:
-        model_path: Path to the saved state dict (``m5_model.pt``).
+        model_path: Path to the saved model state dict (``m5_model.pt``).
         device: Torch device.
 
     Returns:
         The loaded model in eval mode.
     """
-    model = M5EnvelopeFrictionModel(device=device)
+    with open(model_path.replace("model.pt", "params.json")) as f:
+        saved = json.load(f)
+    fixed = {name: saved[name] for name in saved.get("fixed", [])}
+    init = {name: value for name, value in saved.items() if name in M5EnvelopeFrictionModel.PARAM_NAMES and name not in fixed}
+    model = M5EnvelopeFrictionModel(init_params=init, device=device, fixed_params=fixed)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
     return model

@@ -3,8 +3,18 @@
     tau_f^m = K_v |v| + K_c + |K_m tau_m - K_e tau_e|
             + exp(-|v / v_s|^alpha) * (K_c^s + |K_m^s tau_m - K_e^s tau_e|)
 
-The measured friction is ``tau_f = tau_inertia - tau_e - tau_m`` (see
-``process_dataframe``). The envelope is only observable in some samples:
+The measured friction is observed per sample from the fixed constants fitted in
+separate experiments (see ``train_inertia`` and ``train_current_gain``):
+
+    tau_f = tau_m - J * alpha + tau_e,   tau_m = K_t * i_des,
+    i_des = POS_K * (theta_desired - theta)
+
+where ``i_des`` is the P-control commanded current and ``J``, ``K_t`` and
+``POS_K`` are the fixed inertia, current-to-torque gain and position P gain.
+The velocity-proportional and Coulomb terms are fixed to the back-drive
+constants (``K_v = b``, ``K_c = c``), so only the load-dependent and
+static-envelope parameters are optimized. The envelope is only observable in
+some samples:
 
 - Moving (|v| > ``velocity_threshold``): friction is saturated and opposes the
   motion, so ``tau_f^m = -sign(v) * tau_f``. Fitted with MSE.
@@ -45,6 +55,9 @@ VELOCITY_COL = "measured_velocity_rad_per_sec_data"
 TAU_MOTOR_COL = "calculated_motor_torque_Nm_data"
 TAU_EXTERNAL_COL = "bota_wrench_N_and_Nm_torque_z"
 FRICTION_COL = "calculated_friction_torque_Nm_data"
+
+FIXED_K_V = 0.003764099167855621
+FIXED_K_C = 0.006662410948835853
 
 
 def _run_lengths(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -209,6 +222,7 @@ def train_m5(
         velocity_deadzone=config.static_velocity_threshold,
         alpha_min=config.alpha_min,
         alpha_max=config.alpha_max,
+        fixed_params={"K_v": FIXED_K_V, "K_c": FIXED_K_C},
     )
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=max(config.patience // 4, 1))
@@ -264,6 +278,7 @@ def train_m5(
     params = model.physical_parameters()
 
     print("\nFitted parameters:")
+    print(f"  fixed: {', '.join(model.fixed_names)}")
     for name, value in params.items():
         print(f"  {name} = {value:.6g}")
     print(f"Best val loss: {val_losses['total']:.3e}")
@@ -285,7 +300,7 @@ def train_m5(
     params_path = os.path.join(OUTPUT_DIR, f"{latest_prefix}params.json")
     torch.save(model.state_dict(), model_path)
     with open(params_path, "w") as f:
-        json.dump(params, f, indent=2)
+        json.dump({**params, "fixed": list(model.fixed_names)}, f, indent=2)
     print(f"Saved model to {model_path} and parameters to {params_path}")
 
     return model

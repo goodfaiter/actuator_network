@@ -553,6 +553,10 @@ class M5EnvelopeFrictionModel(torch.nn.Module):
     a sigmoid: ``alpha < 1`` gives an infinite slope at the dead-zone edge and a
     large ``alpha`` approaches a step at ``v_s``, both of which make the envelope
     hypersensitive to velocity. The bounds are buffers saved in the state dict.
+
+    Parameters listed in ``fixed_params`` are held constant: they are registered
+    as buffers (excluded from the optimizer, still saved in the state dict) and
+    returned unchanged by :meth:`_param` and :meth:`physical_parameters`.
     """
 
     PARAM_NAMES = ("K_v", "K_c", "K_m", "K_e", "v_s", "alpha", "K_cs", "K_ms", "K_es")
@@ -576,14 +580,23 @@ class M5EnvelopeFrictionModel(torch.nn.Module):
         velocity_deadzone: float = 0.0,
         alpha_min: float = 1.0,
         alpha_max: float = 2.0,
+        fixed_params: dict[str, float] | None = None,
     ):
         super().__init__()
         self.register_buffer("velocity_deadzone", torch.tensor(velocity_deadzone, device=device))
         self.register_buffer("alpha_min", torch.tensor(alpha_min, device=device))
         self.register_buffer("alpha_max", torch.tensor(alpha_max, device=device))
+        self.fixed_names = tuple(name for name in self.PARAM_NAMES if fixed_params and name in fixed_params)
+        for name in self.fixed_names:
+            self.register_buffer(f"fixed_{name}", torch.tensor(float(fixed_params[name]), device=device))
         params = {**self.DEFAULT_INIT, **(init_params or {})}
-        raw = {name: self._inverse_softplus(torch.tensor(params[name], device=device)) for name in self.PARAM_NAMES}
-        raw["alpha"] = self._inverse_alpha(torch.tensor(params["alpha"], device=device))
+        raw = {
+            name: self._inverse_softplus(torch.tensor(params[name], device=device))
+            for name in self.PARAM_NAMES
+            if name not in self.fixed_names
+        }
+        if "alpha" not in self.fixed_names:
+            raw["alpha"] = self._inverse_alpha(torch.tensor(params["alpha"], device=device))
         self.raw_params = torch.nn.ParameterDict({name: torch.nn.Parameter(value) for name, value in raw.items()})
 
     @staticmethod
@@ -596,6 +609,8 @@ class M5EnvelopeFrictionModel(torch.nn.Module):
         return torch.logit(((alpha - self.alpha_min) / span).clamp(1e-3, 1 - 1e-3))
 
     def _param(self, name: str) -> torch.Tensor:
+        if name in self.fixed_names:
+            return getattr(self, f"fixed_{name}")
         if name == "alpha":
             return self.alpha_min + (self.alpha_max - self.alpha_min) * torch.sigmoid(self.raw_params[name])
         return torch.nn.functional.softplus(self.raw_params[name]) + self.EPS

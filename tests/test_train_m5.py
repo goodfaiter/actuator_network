@@ -8,7 +8,17 @@ import torch
 
 from actuator_network.helpers.hyperparameters import M5FrictionConfig
 from actuator_network.helpers.torch_model import M5EnvelopeFrictionModel
-from actuator_network.train_m5 import FRICTION_COL, TAU_EXTERNAL_COL, TAU_MOTOR_COL, VELOCITY_COL, build_friction_samples, train_m5
+from actuator_network.train_m5 import (
+    FIXED_K_T,
+    FIXED_POS_K,
+    FRICTION_COL,
+    TAU_EXTERNAL_COL,
+    TAU_MOTOR_COL,
+    VELOCITY_COL,
+    build_friction_samples,
+    compute_observed_friction,
+    train_m5,
+)
 
 
 def _make_df(velocity, tau_motor, tau_external, friction) -> pd.DataFrame:
@@ -129,3 +139,55 @@ def test_train_m5_recovers_envelope(tmp_path):
         rmse = torch.sqrt(torch.mean((prediction[moving] - samples["target"][moving]) ** 2)).item()
     assert rmse < 5e-3
     assert (tmp_path / "m5_params.json").exists()
+
+
+def test_fixed_params_are_buffers_not_optimized():
+    model = M5EnvelopeFrictionModel(fixed_params={"K_v": 0.005, "K_c": 0.02})
+
+    assert model.fixed_names == ("K_v", "K_c")
+    optimized_names = {name for name, _ in model.named_parameters()}
+    assert "K_v" not in optimized_names and "K_c" not in optimized_names
+    assert torch.isclose(model._param("K_v"), torch.tensor(0.005))
+    assert torch.isclose(model._param("K_c"), torch.tensor(0.02))
+    params = model.physical_parameters()
+    assert abs(params["K_v"] - 0.005) < 1e-6 and abs(params["K_c"] - 0.02) < 1e-6
+
+
+def test_fixed_params_honored_in_forward_and_roundtrip():
+    velocity = torch.tensor([1.0, -1.0])
+    zeros = torch.zeros(2)
+    model_a = M5EnvelopeFrictionModel(fixed_params={"K_v": 0.005, "K_c": 0.02})
+    model_b = M5EnvelopeFrictionModel(fixed_params={"K_v": 0.05, "K_c": 0.02})
+
+    # The same optimized parameters but different fixed K_v give different outputs.
+    assert not torch.allclose(model_a(velocity, zeros, zeros), model_b(velocity, zeros, zeros))
+
+    loaded = M5EnvelopeFrictionModel(fixed_params={"K_v": 0.005, "K_c": 0.02})
+    loaded.load_state_dict(model_b.state_dict())
+    assert torch.isclose(loaded._param("K_v"), torch.tensor(0.05))
+    assert abs(loaded.physical_parameters()["K_c"] - 0.02) < 1e-6
+
+
+def test_fixed_params_default_keeps_all_optimized():
+    model = M5EnvelopeFrictionModel()
+
+    assert model.fixed_names == ()
+    optimized_names = {name.split(".")[-1] for name, _ in model.named_parameters()}
+    assert set(model.PARAM_NAMES) == optimized_names
+
+
+def test_compute_observed_friction_uses_p_control_torque():
+    df = pd.DataFrame(
+        {
+            "desired_position_rad_data": [0.1, 0.2],
+            "measured_position_rad_data": [0.0, 0.1],
+            "calculated_acceleration_rad_per_sec2_data": [0.0, 0.0],
+            "bota_wrench_N_and_Nm_torque_z": [-0.05, -0.05],
+        }
+    )
+
+    result = compute_observed_friction(df)
+
+    expected_tau_m = FIXED_K_T * FIXED_POS_K * 0.1
+    np.testing.assert_allclose(result[TAU_MOTOR_COL].to_numpy(), [expected_tau_m, expected_tau_m])
+    np.testing.assert_allclose(result[FRICTION_COL].to_numpy(), [expected_tau_m - 0.05, expected_tau_m - 0.05])
